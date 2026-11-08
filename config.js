@@ -17,7 +17,7 @@ window.RN_CONFIG = {
   organizer: 'SERNATUR Región de Valparaíso',
 
   // Solo para el modo demo (en modo real se define en apps-script/Code.gs)
-  superadminEmails: ['rmunoz.asesoriaspdi@gmail.com'],
+  superadminEmails: ['tu-mail@gmail.com'],
 
   // Región que se muestra en la portada principal
   homeRegion: 'valparaiso',
