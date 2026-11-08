@@ -1,0 +1,20 @@
+FOTOGRAFÍAS DE LA PLATAFORMA
+============================
+
+Cada región tiene su carpeta (por ejemplo: fotos/valparaiso/).
+Las fotos de portada se rotan solas en la página de inicio y en los eventos.
+
+Para cambiar o agregar fotos de Valparaíso:
+  - Pon los archivos en fotos/valparaiso/ con estos nombres:
+      portada-1.jpg, portada-2.jpg, portada-3.jpg, portada-4.jpg, portada-5.jpg
+  - Si falta alguna, la plataforma simplemente la omite.
+  - Recomendado: formato horizontal, 1920 x 1080 px, menos de 500 KB cada una.
+
+Para agregar otra región (ej. Biobío):
+  1. Crea la carpeta fotos/biobio/ con sus fotos portada-1.jpg, etc.
+  2. (Opcional) Agrega su logo blanco en img/
+  3. En config.js, dentro de "regions", agrega la región con sus fotos y logo
+     (hay un ejemplo comentado).
+
+Un evento también puede tener su propia foto: en Administración > Datos del
+evento > "Foto de portada", escribe la ruta, por ejemplo fotos/valparaiso/portada-3.jpg
