@@ -2,8 +2,8 @@
 // con una "planilla" simulada guardada en este navegador. Así la demo se comporta
 // exactamente igual que el modo real.
 (function () {
-  const KEY = 'rn_demo_v3';
-  const TOKEN_KEY = 'rn_demo_token_v3';
+  const KEY = 'rn_demo_v4';
+  const TOKEN_KEY = 'rn_demo_token_v4';
   let mailListener = null;
   const outbox = [];
 
@@ -47,6 +47,9 @@
     await call('respondMeeting', { eventId: ev, id: m1, accept: true }, tok['vendedor@demo.cl'].token);
     await call('requestMeeting', { eventId: ev, uid: tok['vendedor@demo.cl'].user.uid, slot: d1 + ' 10:15', note: 'Buscamos alojamiento para grupos corporativos.' }, tok['norte@demo.cl'].token);
     await call('requestMeeting', { eventId: ev, uid: tok['comprador@demo.cl'].user.uid, slot: d1 + ' 09:50' }, tok['vinos@demo.cl'].token);
+    // salas Meet (ficticias en demo) y una reunión ya evaluada
+    await call('createRooms', { eventId: ev }, S);
+    await call('saveSurvey', { eventId: ev, id: m1, held: 'si', interest: 4, outcome: 'seguimiento', amount: 12000, comment: 'Enviaremos tarifas para grupos familiares.' }, tok['vendedor@demo.cl'].token);
     for (const k of Object.keys(tok)) await call('signOut', {}, tok[k].token);
     await call('signOut', {}, S); await call('signOut', {}, valpo.token);
     outbox.length = 0;
@@ -59,7 +62,8 @@
       save: s => { try { localStorage.setItem(KEY, JSON.stringify(s)); } catch (e) { } },
       onMail: o => { outbox.push(o); if (mailListener) mailListener(o); }
     });
-    ['SpreadsheetApp', 'PropertiesService', 'Utilities', 'LockService', 'ContentService', 'MailApp'].forEach(k => { window[k] = env[k]; });
+    ['SpreadsheetApp', 'PropertiesService', 'Utilities', 'LockService', 'ContentService', 'MailApp', 'Calendar'].forEach(k => { window[k] = env[k]; });
+    window.RN_DEMO_MODE = true;
     window.RN_DEMO_SUPERADMINS = ['admin@demo.cl'].concat(cfg.superadminEmails || []);
     await loadScript('apps-script/Code.gs');
     const transport = async req => JSON.parse(JSON.stringify(window.handle(req)));

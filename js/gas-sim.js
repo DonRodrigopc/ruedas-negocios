@@ -85,7 +85,22 @@
       },
       LockService: { getScriptLock: () => ({ waitLock() { }, releaseLock() { } }) },
       ContentService: { MimeType: { JSON: 'json' }, createTextOutput: s => ({ setMimeType() { return this; }, getContent: () => s }) },
-      MailApp: { sendEmail: o => { if (opts.onMail) opts.onMail(o); } }
+      MailApp: { sendEmail: o => { if (opts.onMail) opts.onMail(o); } },
+      // Google Calendar (servicio avanzado) simulado: crea links de Meet ficticios
+      Calendar: {
+        Calendars: { insert: c => { const id = 'cal_' + uuid().slice(0, 8); state.calendars = state.calendars || {}; state.calendars[id] = c; persist(); return { id }; } },
+        Events: {
+          insert: (ev, calId) => {
+            const L = 'abcdefghijkmnopqrstuvwxyz', r = n => Array.from({ length: n }, () => L[Math.floor(Math.random() * L.length)]).join('');
+            const id = 'evt_' + uuid().replace(/-/g, '').slice(0, 12);
+            const e = Object.assign({}, ev, { id, calendarId: calId, hangoutLink: 'https://meet.google.com/' + r(3) + '-' + r(4) + '-' + r(3) });
+            delete e.conferenceData;
+            state.calendarEvents = state.calendarEvents || {}; state.calendarEvents[id] = e; persist(); return e;
+          },
+          patch: (patch, calId, id) => { const e = (state.calendarEvents || {})[id]; if (!e) throw new Error('Not Found'); Object.assign(e, patch); persist(); return e; },
+          remove: (calId, id) => { if (state.calendarEvents) delete state.calendarEvents[id]; persist(); }
+        }
+      }
     };
   }
   const api = { createEnv, sha256 };

@@ -80,7 +80,15 @@
       respondMeeting: (eventId, id, accept) => call('respondMeeting', { eventId, id, accept }),
       cancelMeeting: (eventId, id) => call('cancelMeeting', { eventId, id }),
       setBlock: (eventId, slot, blocked) => call('setBlock', { eventId, slot, blocked }),
-      listMeetings: eventId => call('listMeetings', { eventId })
+      listMeetings: eventId => call('listMeetings', { eventId }),
+      // salas y cierre
+      listRooms: eventId => call('listRooms', { eventId }),
+      createRooms: eventId => call('createRooms', { eventId }),
+      setRoom: (eventId, sellerUid, url) => call('setRoom', { eventId, sellerUid, url }),
+      syncGuests: eventId => call('syncGuests', { eventId }),
+      joinMeeting: (eventId, id) => call('joinMeeting', { eventId, id }),
+      saveSurvey: (eventId, id, d) => call('saveSurvey', Object.assign({ eventId, id }, d)),
+      listSurveys: eventId => call('listSurveys', { eventId })
     };
   }
   window.RN_createSheetsDB = create;

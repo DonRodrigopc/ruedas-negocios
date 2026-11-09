@@ -58,7 +58,7 @@
     if (c === 'network') return t('err_network');
     if (c.includes('permission-denied') || c === 'unauthenticated') return t('no_access');
     if (c === 'invalid') return t('required');
-    const map = { 'slot-taken': 'err_slot_taken', 'slot-invalid': 'err_slot_taken', 'pair-exists': 'err_pair', 'too-many': 'err_too_many', 'me-busy': 'err_me_busy', 'too-late': 'too_late', closed: 'agenda_closed', 'not-pending': 'err_not_pending' };
+    const map = { 'slot-taken': 'err_slot_taken', 'slot-invalid': 'err_slot_taken', 'pair-exists': 'err_pair', 'too-many': 'err_too_many', 'me-busy': 'err_me_busy', 'too-late': 'too_late', closed: 'agenda_closed', 'not-pending': 'err_not_pending', 'not-yet': 'err_not_yet', 'no-room': 'no_room' };
     if (map[c]) return t(map[c]);
     console.error(e); return t('err_generic');
   }
@@ -143,8 +143,9 @@
     return new Promise(res => { const i = new Image(); i.onload = () => { photoOk[src] = true; res(true); }; i.onerror = () => { photoOk[src] = false; res(false); }; i.src = src; });
   }
   let heroTimers = [];
+  let agendaTimer = null;
   function bindPhotos(root) {
-    heroTimers.forEach(clearInterval); heroTimers = [];
+    heroTimers.forEach(clearInterval); heroTimers = []; if (agendaTimer) { clearInterval(agendaTimer); agendaTimer = null; }
     const still = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     $$('.hero-media', root).forEach(async m => {
       const list = JSON.parse(m.getAttribute('data-photos') || '[]'); const ok = [];
@@ -750,7 +751,37 @@
     const when = m => `<div class="when">${esc(slotText(slotMap[m.slot], sched.tz)) || esc(m.slot)}</div>`;
     const note = m => m.note ? `<p class="m-note">“${esc(m.note)}”</p>` : '';
     const row = (m, actions) => `<div class="m-row">${who(m)}<div class="m-info">${when(m)}${note(m)}</div><div class="m-act">${actions}</div></div>`;
-    const section = (title, list, render, extra) => `<section class="card"><div class="row-between"><h2>${title} <span class="count">${list.length}</span></h2>${extra || ''}</div>${list.length ? list.map(render).join('') : `<p class="muted">${t('none_yet')}</p>`}</section>`;
+    const section = (title, list, render, extra) => `<section class="card"><div class="row-between"><h2>${title} <span class="count">${list.length}</span></h2></div>${extra || ''}${list.length ? list.map(render).join('') : `<p class="muted">${t('none_yet')}</p>`}</section>`;
+    const rooms = ['agenda', 'reuniones'].includes(ev.phase);
+    const upcoming = confirmed.filter(m => !m.joinUntil || Date.parse(m.joinUntil) > Date.now());
+    const nextId = upcoming.length ? upcoming[0].id : null;
+    const joinState = m => { if (!m.joinFrom) return 'open'; const n = Date.now(); if (n < Date.parse(m.joinFrom)) return 'soon'; if (n > Date.parse(m.joinUntil)) return 'ended'; return 'open'; };
+    const joinArea = m => {
+      if (!rooms) return '';
+      if (!m.hasRoom) return `<p class="small muted">${t('no_room')}</p>`;
+      const st = joinState(m);
+      if (st === 'ended') return `<p class="small muted">${t('join_ended')}</p>`;
+      return `<button class="btn btn-primary btn-join" data-join="${esc(m.id)}" data-from="${esc(m.joinFrom || '')}" data-until="${esc(m.joinUntil || '')}"${st === 'soon' ? ' disabled' : ''}>${st === 'soon' ? `${t('join_from')} ${fmtTime(m.joinFrom)}` : '▶ ' + t('join')}</button>`;
+    };
+    const surveyForm = m => {
+      const v = m.survey || {};
+      return `<form class="survey" data-survey="${esc(m.id)}" hidden novalidate>
+        <div class="label">${t('q_held')}</div>
+        <div class="pills"><label><input type="radio" name="held" value="si"${v.held === 'si' ? ' checked' : ''}><span>${t('yes')}</span></label><label><input type="radio" name="held" value="no"${v.held === 'no' ? ' checked' : ''}><span>${t('no')}</span></label></div>
+        <div class="held-yes"${v.held === 'si' ? '' : ' hidden'}>
+          <div class="label">${t('q_interest')}</div>
+          <div class="pills">${[1, 2, 3, 4, 5].map(n => `<label><input type="radio" name="interest" value="${n}"${String(v.interest) === String(n) ? ' checked' : ''}><span>${n}</span></label>`).join('')}</div>
+          <label>${t('q_outcome')}<select name="outcome"><option value="">—</option>${['negocio', 'seguimiento', 'sin_interes'].map(o => `<option value="${o}"${v.outcome === o ? ' selected' : ''}>${t('o_' + o)}</option>`).join('')}</select></label>
+          <label>${t('q_amount')}<input type="number" name="amount" min="0" step="100" inputmode="numeric" value="${esc(v.amount && v.amount !== '0' ? v.amount : '')}"></label>
+        </div>
+        <label>${t('q_comment')}<textarea name="comment" rows="2" maxlength="500">${esc(v.comment)}</textarea></label>
+        <div class="form-msg" role="alert"></div>
+        <button class="btn btn-primary btn-small" type="submit">${t('save_eval')}</button>
+      </form>`;
+    };
+    const myRoomCard = me.type === 'vendedor' && mine.room && rooms ? `<div class="card room-card"><div><p class="kicker">${t('my_room')}</p><p class="small muted">${t('my_room_help')}</p>
+      <p class="small"><a href="${esc(mine.room.url)}" target="_blank" rel="noopener">${esc(mine.room.url)}</a></p></div>
+      <a class="btn btn-primary" href="${esc(mine.room.url)}" target="_blank" rel="noopener">${t('open_room')}</a></div>` : '';
     const blocks = {}; mine.blocks.forEach(b => { blocks[b] = 1; });
     const meetAt = {}; confirmed.forEach(m => { meetAt[m.slot] = m; });
     const now = Date.now();
@@ -766,12 +797,17 @@
           <div class="stat stat-warn"><span>${received.length}</span>${t('received')}</div>
           <div class="stat"><span>${sent.length}/${sched.rules.maxPending}</span>${t('pending_count')}</div>
         </div>
-        ${open ? `<div class="card status-box"><p>${t('agenda_open_cta')}</p><a class="btn btn-primary" href="#/evento/${eid}/catalogo">${t('catalog')}</a></div>` : `<p class="notice">${t('agenda_closed')}</p>`}
-        ${section(t('received'), received, m => row(m, open ? `<button class="btn btn-small btn-primary" data-resp="1" data-id="${esc(m.id)}">${t('accept')}</button><button class="btn btn-small" data-resp="0" data-id="${esc(m.id)}">${t('reject')}</button>` : meetingBadge(m.status)))}
+        ${open ? `<div class="card status-box"><p>${t('agenda_open_cta')}</p><a class="btn btn-primary" href="#/evento/${eid}/catalogo">${t('catalog')}</a></div>` : ev.phase === 'reuniones' ? `<div class="card status-box"><p><strong>${t('meetings_day')}</strong></p></div>` : `<p class="notice">${t('agenda_closed')}</p>`}
+        ${myRoomCard}
         ${section(t('confirmed'), confirmed, m => {
-          const sl = slotMap[m.slot]; const can = sl && Date.parse(sl.start) - now >= cancelMs;
-          return row(m, `${meetingBadge('aceptada')}<p class="small muted">${t('video_soon')}</p>${can ? `<button class="btn btn-small btn-danger" data-cancel="${esc(m.id)}">${t('cancel_meeting')}</button>` : `<p class="small muted">${t('too_late')}</p>`}`);
-        })}
+          const sl = slotMap[m.slot]; const can = open && sl && Date.parse(sl.start) - now >= cancelMs;
+          const isNext = nextId === m.id;
+          return `<div class="meet-card${isNext ? ' is-next' : ''}">` + row(m, `${isNext ? `<span class="badge ph-inscripcion">${t('next_meeting')}</span>` : meetingBadge('aceptada')}
+            ${joinArea(m)}
+            ${m.canSurvey ? (m.survey ? `<span class="badge mt-aceptada">${t('evaluated')} ✓</span><button class="link small" data-eval="${esc(m.id)}">${t('edit_eval')}</button>` : `<button class="btn btn-small" data-eval="${esc(m.id)}">${t('evaluate')}</button>`) : ''}
+            ${can ? `<button class="btn btn-small btn-ghost" data-cancel="${esc(m.id)}">${t('cancel_meeting')}</button>` : ''}`) + (m.canSurvey ? surveyForm(m) : '') + `</div>`;
+        }, confirmed.length && rooms ? `<p class="small muted meet-hint">${esc(t('meet_hint').replace('{email}', S.user.email))}${DB.mode === 'demo' ? ' ' + t('demo_meet') : ''}</p>` : '')}
+        ${section(t('received'), received, m => row(m, open ? `<button class="btn btn-small btn-primary" data-resp="1" data-id="${esc(m.id)}">${t('accept')}</button><button class="btn btn-small" data-resp="0" data-id="${esc(m.id)}">${t('reject')}</button>` : meetingBadge(m.status)))}
         ${section(t('sent'), sent, m => row(m, `${meetingBadge('pendiente')}<button class="btn btn-small btn-ghost" data-cancel="${esc(m.id)}">${t('withdraw')}</button>`))}
         <section class="card"><h2>${t('availability')}</h2><p class="small muted">${t('availability_help')}</p><div class="slot-days">${grid}</div></section>
         ${past.length ? `<details class="card history"><summary><h2>${t('history')} <span class="count">${past.length}</span></h2></summary>${past.map(m => row(m, meetingBadge(m.status))).join('')}</details>` : ''}
@@ -787,6 +823,37 @@
         $$('[data-cancel]', root).forEach(b => b.onclick = async () => {
           busy(b);
           try { await DB.cancelMeeting(id, b.getAttribute('data-cancel')); render(); } catch (err) { await render(); fail(err); }
+        });
+        // entrar a la sala (se abre la ventana antes para que el navegador no la bloquee)
+        $$('[data-join]', root).forEach(b => b.onclick = async () => {
+          const w = window.open('', '_blank');
+          try {
+            const r = await DB.joinMeeting(id, b.getAttribute('data-join'));
+            if (w && !w.closed) { try { w.opener = null; } catch (x) { } w.location.href = r.url; }
+            else { const box = $('#agenda-msg', root); box.className = 'form-msg ok'; box.innerHTML = `${esc(t('popup_blocked'))} <a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.url)}</a>`; box.scrollIntoView({ block: 'center' }); }
+          } catch (err) { if (w) w.close(); fail(err); }
+        });
+        const tick = () => $$('[data-join]', root).forEach(b => {
+          const f = b.getAttribute('data-from'), u = b.getAttribute('data-until'); if (!f) return;
+          const n = Date.now();
+          if (n >= Date.parse(f) && n <= Date.parse(u)) { b.disabled = false; b.textContent = '▶ ' + t('join'); }
+          else if (n > Date.parse(u)) { b.outerHTML = `<p class="small muted">${t('join_ended')}</p>`; }
+        });
+        agendaTimer = setInterval(tick, 20000);
+        // evaluación
+        $$('[data-eval]', root).forEach(b => b.onclick = () => { const f = $(`form[data-survey="${b.getAttribute('data-eval')}"]`, root); f.hidden = !f.hidden; if (!f.hidden) f.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); });
+        $$('form[data-survey]', root).forEach(f => {
+          const yes = $('.held-yes', f);
+          $$('input[name=held]', f).forEach(r => r.onchange = () => { yes.hidden = r.value !== 'si' || !r.checked; });
+          f.onsubmit = async e => {
+            e.preventDefault();
+            const pick = n => (($$(`input[name=${n}]:checked`, f)[0]) || {}).value || '';
+            const d = { held: pick('held'), interest: Number(pick('interest')) || 0, outcome: val(f, 'outcome'), amount: Number(val(f, 'amount')) || 0, comment: val(f, 'comment') };
+            if (!d.held || (d.held === 'si' && (!d.interest || !d.outcome))) return showError(f, t('required'));
+            const btn = $('button[type=submit]', f); btn.disabled = true;
+            try { await DB.saveSurvey(id, f.getAttribute('data-survey'), d); S.flash = { type: 'ok', msg: t('eval_saved') }; render(); }
+            catch (err) { btn.disabled = false; showError(f, errMsg(err)); }
+          };
         });
         $$('[data-block]', root).forEach(b => b.onclick = async () => {
           const on = b.getAttribute('data-on') === '1'; b.disabled = true;
@@ -906,7 +973,16 @@
     const ev = await DB.getEvent(id);
     if (!ev) return notFound();
     if (!isAdminOf(ev.regionId)) return denied();
-    const [regs, contacts, meetings, sched] = await Promise.all([DB.listRegistrations(id), DB.listContacts(id), DB.listMeetings(id), DB.getSchedule(id)]);
+    const [regs, contacts, meetings, sched, rooms, surveys] = await Promise.all([DB.listRegistrations(id), DB.listContacts(id), DB.listMeetings(id), DB.getSchedule(id), DB.listRooms(id), DB.listSurveys(id)]);
+    const roomsMissing = rooms.filter(r => !r.url).length;
+    const conf = meetings.filter(m => m.status === 'aceptada');
+    const sv = {}; surveys.forEach(x => { (sv[x.meetingId] = sv[x.meetingId] || {})[x.role] = x; });
+    const heldCount = conf.filter(m => m.held === 'si' || (sv[m.id] && Object.values(sv[m.id]).some(x => x.held === 'si'))).length;
+    const bothJoined = conf.filter(m => m.sellerJoinedAt && m.buyerJoinedAt).length;
+    const sumRole = role => surveys.filter(x => x.role === role).reduce((a, x) => a + (Number(x.amount) || 0), 0);
+    const outc = o => surveys.filter(x => x.outcome === o).length;
+    const ints = surveys.filter(x => Number(x.interest)); const avgInt = ints.length ? (ints.reduce((a, x) => a + Number(x.interest), 0) / ints.length).toFixed(1) : '—';
+    const usd = n => 'US$ ' + Math.round(n).toLocaleString('es-CL');
     const cmap = {}; contacts.forEach(c => { cmap[c.uid] = c; });
     const rmap = {}; regs.forEach(r => { rmap[r.uid] = r; });
     const slotMap = {}; sched.slots.forEach(s => { slotMap[s.id] = s; });
@@ -955,6 +1031,31 @@
           <div class="stat"><span>${mcount('rechazada') + mcount('cancelada') + mcount('vencida') + mcount('anulada')}</span>rechazadas, canceladas o vencidas</div>
         </div>
         ${meetings.length ? `<p><button class="btn" id="btn-csv-m">Descargar reuniones (CSV)</button></p><div class="table-wrap"><table><thead><tr><th>Bloque (Chile)</th><th>Vendedor</th><th>Comprador</th><th>Solicitó</th><th>Estado</th></tr></thead><tbody>${mRows}</tbody></table></div>` : '<p class="muted">Aún no hay solicitudes de reunión.</p>'}
+      </section>
+      <section class="card"><h2>Salas de video (Google Meet)</h2>
+        <p class="small muted">Se crea una sala fija por vendedor aprobado en tu Google Calendar (calendario "Ruedas de Negocios – Salas"). Al confirmarse una reunión, el comprador queda invitado a la sala con su correo y entra directo. Puedes reemplazar cualquier link por uno propio (Meet, Teams o Zoom).</p>
+        <div class="actions">
+          <button class="btn btn-primary" id="btn-rooms"${roomsMissing ? '' : ' disabled'}>${roomsMissing ? `Crear salas Meet (${roomsMissing} pendientes)` : 'Todas las salas creadas ✓'}</button>
+          <button class="btn" id="btn-sync">Actualizar invitados</button>
+        </div>
+        <div class="form-msg" id="rooms-msg"></div>
+        ${rooms.length ? `<div class="table-wrap"><table><thead><tr><th>Vendedor</th><th>Sala</th><th>Invitados</th><th>Cambiar link</th></tr></thead><tbody>${rooms.map(r => `<tr>
+          <td><strong>${esc(r.companyName)}</strong></td>
+          <td>${r.url ? `<a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.url.replace(/^https:\/\//, ''))}</a><br><small class="muted">${r.provider === 'meet' ? 'Meet automático' : 'Link manual'}</small>` : '<span class="muted">Sin sala</span>'}</td>
+          <td>${r.provider === 'meet' ? r.guests : '—'}</td>
+          <td><div class="copy-row"><input placeholder="https://…" aria-label="Link de sala" data-room-input="${esc(r.sellerUid)}" value="${esc(r.url)}"><button class="btn btn-small" data-room-save="${esc(r.sellerUid)}">Guardar</button></div></td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">Aún no hay vendedores aprobados.</p>'}
+      </section>
+      <section class="card"><h2>Resultados</h2>
+        <div class="stats">
+          <div class="stat"><span>${conf.length}</span>reuniones confirmadas</div>
+          <div class="stat stat-ok"><span>${heldCount}</span>realizadas (según evaluación)</div>
+          <div class="stat"><span>${bothJoined}</span>con ingreso de ambas empresas a la sala</div>
+          <div class="stat"><span>${surveys.length}</span>evaluaciones recibidas</div>
+          <div class="stat stat-ok"><span>${usd(sumRole('vendedor'))}</span>expectativa declarada por vendedores</div>
+          <div class="stat"><span>${usd(sumRole('comprador'))}</span>expectativa declarada por compradores</div>
+        </div>
+        <p class="small">Resultados: <strong>${outc('negocio')}</strong> negocios concretados · <strong>${outc('seguimiento')}</strong> con seguimiento · <strong>${outc('sin_interes')}</strong> sin interés · interés promedio <strong>${avgInt}</strong>/5</p>
+        <button class="btn" id="btn-csv-r"${conf.length ? '' : ' disabled'}>Descargar reporte de resultados (CSV)</button>
       </section>
       <section class="card"><h2>Inscripciones</h2>
         <div class="filters">
@@ -1052,6 +1153,40 @@
           const head = ['Bloque (hora Chile)', 'Vendedor', 'Comprador', 'Solicitó', 'Estado', 'Mensaje', 'Creada', 'Respondida'];
           const rows = meetings.map(m => [m.slot, (rmap[m.sellerUid] || {}).companyName, (rmap[m.buyerUid] || {}).companyName, (rmap[m.requesterUid] || {}).companyName, m.status, m.note, fmtDate(m.createdAt), fmtDate(m.respondedAt)]);
           downloadCsv('reuniones-' + id + '.csv', [head].concat(rows));
+        };
+        // salas
+        const rmsg = $('#rooms-msg', root);
+        const say = (txt, bad) => { rmsg.className = 'form-msg ' + (bad ? 'error' : 'ok'); rmsg.textContent = txt; };
+        $('#btn-rooms', root).onclick = async () => {
+          const b = $('#btn-rooms', root); b.disabled = true; let total = 0; const errs = [];
+          try {
+            for (let i = 0; i < 20; i++) {
+              say('Creando salas… ' + total + ' listas');
+              const r = await DB.createRooms(id); total += r.created; errs.push(...r.errors);
+              if (!r.remaining || (!r.created && r.errors.length)) break;
+            }
+            S.flash = { type: errs.length ? 'error' : 'ok', msg: `Salas creadas: ${total}.` + (errs.length ? ' Errores: ' + errs.join(' · ') : '') }; render();
+          } catch (err) { b.disabled = false; say(adminErr(err), true); }
+        };
+        $('#btn-sync', root).onclick = async () => {
+          try { const r = await DB.syncGuests(id); say(`Invitados actualizados en ${r.synced} salas.` + (r.errors.length ? ' Errores: ' + r.errors.join(' · ') : ''), r.errors.length); }
+          catch (err) { say(adminErr(err), true); }
+        };
+        $$('[data-room-save]', root).forEach(b => b.onclick = async () => {
+          const uid = b.getAttribute('data-room-save'); const v = $(`[data-room-input="${uid}"]`, root).value.trim();
+          try { await DB.setRoom(id, uid, v); S.flash = { type: 'ok', msg: 'Link de sala guardado.' }; render(); }
+          catch (err) { say(adminErr(err), true); }
+        });
+        const br = $('#btn-csv-r', root);
+        if (br) br.onclick = () => {
+          const out = o => o ? ({ negocio: 'Negocio concretado', seguimiento: 'Seguimiento', sin_interes: 'Sin interés' }[o] || o) : '';
+          const head = ['Bloque (hora Chile)', 'Vendedor', 'Comprador', 'Ingreso vendedor', 'Ingreso comprador', 'Realizada (vendedor)', 'Realizada (comprador)', 'Interés vendedor', 'Interés comprador', 'Resultado vendedor', 'Resultado comprador', 'Expectativa vendedor US$', 'Expectativa comprador US$', 'Comentario vendedor', 'Comentario comprador'];
+          const rows = conf.slice().sort((a, b) => a.slot.localeCompare(b.slot)).map(m => {
+            const v = (sv[m.id] || {}).vendedor || {}, c = (sv[m.id] || {}).comprador || {};
+            const hora = x => x ? new Date(x).toLocaleString('es-CL', { timeZone: 'America/Santiago' }) : '';
+            return [m.slot, (rmap[m.sellerUid] || {}).companyName, (rmap[m.buyerUid] || {}).companyName, hora(m.sellerJoinedAt), hora(m.buyerJoinedAt), v.held || '', c.held || '', v.interest || '', c.interest || '', out(v.outcome), out(c.outcome), v.amount || '', c.amount || '', v.comment || '', c.comment || ''];
+          });
+          downloadCsv('resultados-' + id + '.csv', [head].concat(rows));
         };
         // eliminar
         const fd = $('#f-del', root);
