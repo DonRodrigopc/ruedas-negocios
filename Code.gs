@@ -12,7 +12,7 @@
  *    se crean solas; igual puedes ejecutar "setup" otra vez sin perder datos.)
  */
 
-const SUPERADMINS = ['rmunoz.asesoriaspdi@gmail.com'];
+const SUPERADMINS = ['TU-MAIL@gmail.com'];
 const SITE_URL = '';               // ej: 'https://tuusuario.github.io/ruedas-negocios/'
 const SEND_EMAILS = true;          // aprobación, reunión confirmada/cancelada, recuperación de contraseña
 const SEND_REQUEST_EMAILS = false; // aviso por cada solicitud nueva (ojo: Gmail permite ~100 correos/día)
