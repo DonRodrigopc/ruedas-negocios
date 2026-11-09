@@ -1,190 +1,78 @@
-// Capa de datos en MODO DEMO: guarda todo en el navegador (localStorage).
-// Imita las reglas de seguridad de Firestore para que la demo se comporte igual.
+// MODO DEMO: ejecuta el mismo servidor (apps-script/Code.gs) dentro del navegador,
+// con una "planilla" simulada guardada en este navegador. Así la demo se comporta
+// exactamente igual que el modo real.
 (function () {
-  const KEY = 'rn_demo_db_v2';
-  const SESSION = 'rn_demo_session_v1';
-  let mem = null;          // respaldo en memoria si localStorage no está disponible
-  let memSession = null;
-  const listeners = [];
+  const KEY = 'rn_demo_v3';
+  const TOKEN_KEY = 'rn_demo_token_v3';
+  let mailListener = null;
+  const outbox = [];
 
-  function err(code) { const e = new Error(code); e.code = code; return e; }
-  function now() { return new Date().toISOString(); }
-  function uid() { return 'u' + Math.random().toString(36).slice(2, 10); }
-  function clone(o) { return o == null ? o : JSON.parse(JSON.stringify(o)); }
-
-  function load() {
-    try { const raw = localStorage.getItem(KEY); if (raw) return JSON.parse(raw); } catch (e) { if (mem) return mem; }
-    if (mem) return mem;
-    const db = seed(); save(db); return db;
+  function loadScript(src) {
+    return new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = () => rej(new Error('No se pudo cargar ' + src)); document.head.appendChild(s); });
   }
-  function save(db) { mem = db; try { localStorage.setItem(KEY, JSON.stringify(db)); } catch (e) { /* memoria */ } }
-  function getSession() { try { return localStorage.getItem(SESSION); } catch (e) { return memSession; } }
-  function setSession(v) { memSession = v; try { v ? localStorage.setItem(SESSION, v) : localStorage.removeItem(SESSION); } catch (e) { } }
+  const dayPlus = n => { const d = new Date(Date.now() + n * 864e5); return d.toISOString().slice(0, 10); };
 
-  function seed() {
-    const db = { users: [], admins: {}, events: {}, regs: {}, contacts: {} };
-    const add = (email, pw) => { const u = { uid: uid(), email, pw }; db.users.push(u); return u.uid; };
-    add('admin@demo.cl', 'demo1234');
-    add('valpo@demo.cl', 'demo1234');
-    db.admins['valpo@demo.cl'] = { name: 'Admin Valparaíso (demo)', regionId: 'valparaiso' };
-    const ev = 'ev-nacional-2027';
-    db.events[ev] = {
-      id: ev, name: 'Rueda de Negocios Mercado Nacional 2027', market: 'Nacional', regionId: 'valparaiso',
+  async function seed(call) {
+    window.setup();
+    const sup = await call('signUp', { email: 'admin@demo.cl', password: 'demo1234' });
+    const S = sup.token;
+    const valpo = await call('signUp', { email: 'valpo@demo.cl', password: 'demo1234' });
+    await call('setAdmin', { email: 'valpo@demo.cl', name: 'Admin Valparaíso (demo)', regionId: 'valparaiso' }, S);
+    const schedule = { days: [dayPlus(7), dayPlus(8)], start: '09:00', end: '13:00', slot: 20, gap: 5 };
+    const ev = await call('createEvent', { data: {
+      name: 'Rueda de Negocios Mercado Nacional 2027', market: 'Nacional', regionId: 'valparaiso', phase: 'inscripcion',
       description: 'Encuentro online entre prestadores turísticos de la Región de Valparaíso y agencias y tour operadores de todo Chile.',
-      regStart: '2027-01-11', regEnd: '2027-02-05', meetingDates: '2027-03-02 al 2027-03-04', phase: 'inscripcion',
-      createdAt: now(), updatedAt: now()
-    };
-    db.events['ev-brasil-2027'] = {
-      id: 'ev-brasil-2027', name: 'Rueda de Negocios Mercado Brasil 2027', market: 'Brasil', regionId: 'valparaiso',
-      description: 'Borrador: rueda con operadores brasileños.', regStart: '', regEnd: '', meetingDates: '', phase: 'borrador',
-      createdAt: now(), updatedAt: now()
-    };
-    db.regs[ev] = {}; db.contacts[ev] = {};
+      regStart: dayPlus(-20), regEnd: dayPlus(-2), meetingDates: dayPlus(7) + ' y ' + dayPlus(8), schedule } }, S);
+    await call('createEvent', { data: {
+      name: 'Rueda de Negocios Mercado Brasil 2027', market: 'Brasil', regionId: 'valparaiso', phase: 'inscripcion',
+      description: 'Prestadores de la Región de Valparaíso con operadores y agencias de Brasil.', regStart: dayPlus(0), regEnd: dayPlus(30), meetingDates: '' } }, S);
     const people = [
       ['vendedor@demo.cl', 'vendedor', { companyName: 'Hotel Cerro Alegre', serviceTypes: ['alojamiento'], destination: 'Valparaíso', products: 'Hotel boutique de 18 habitaciones con vista a la bahía. Paquetes de fin de semana con tour patrimonial.', sernaturRegistry: '12345', description: 'Hotel boutique en el barrio patrimonial.', website: 'https://example.com', shareContact: true }, 'Carolina Pérez', '+56 9 1111 1111'],
-      ['vinos@demo.cl', 'vendedor', { companyName: 'Ruta del Vino Casablanca', serviceTypes: ['enoturismo', 'gastronomia'], destination: 'Valle de Casablanca', products: 'Tours de día completo a 3 viñas con almuerzo maridaje.', sernaturRegistry: '23456', description: '', website: '', shareContact: false }, 'Matías Rojas', '+56 9 2222 2222'],
-      ['aventura@demo.cl', 'vendedor', { companyName: 'Aventura Cerro a Mar', serviceTypes: ['aventura', 'receptivo'], destination: 'La Campana / Olmué', products: 'Trekking guiado, cabalgatas y kayak en la costa.', sernaturRegistry: '34567', description: '', website: '', shareContact: true }, 'Javiera Soto', '+56 9 3333 3333'],
-      ['comprador@demo.cl', 'comprador', { companyName: 'Viajes del Sur Ltda.', targetMarket: 'Clientes de Santiago y Concepción, segmento familias', description: 'Agencia con 15 años vendiendo destinos nacionales.', website: '', shareContact: true }, 'Andrés Muñoz', '+56 9 4444 4444'],
-      ['norte@demo.cl', 'comprador', { companyName: 'Norte Grande Tour Operador', targetMarket: 'Antofagasta y Calama, turismo corporativo', description: '', website: '', shareContact: false }, 'Fernanda Díaz', '+56 9 5555 5555'],
-      ['pendiente@demo.cl', 'vendedor', { companyName: 'Cabañas Zapallar', serviceTypes: ['alojamiento'], destination: 'Zapallar', products: '6 cabañas frente al mar.', sernaturRegistry: '', description: '', website: '', shareContact: true }, 'Pedro León', '+56 9 6666 6666']
+      ['vinos@demo.cl', 'vendedor', { companyName: 'Ruta del Vino Casablanca', serviceTypes: ['enoturismo', 'gastronomia'], destination: 'Valle de Casablanca', products: 'Tours de día completo a 3 viñas con almuerzo maridaje.', sernaturRegistry: '23456', shareContact: false }, 'Matías Rojas', '+56 9 2222 2222'],
+      ['aventura@demo.cl', 'vendedor', { companyName: 'Aventura Cerro a Mar', serviceTypes: ['aventura', 'receptivo'], destination: 'La Campana / Olmué', products: 'Trekking guiado, cabalgatas y kayak en la costa.', sernaturRegistry: '34567', shareContact: true }, 'Javiera Soto', '+56 9 3333 3333'],
+      ['comprador@demo.cl', 'comprador', { companyName: 'Viajes del Sur Ltda.', targetMarket: 'Clientes de Santiago y Concepción, segmento familias', description: 'Agencia con 15 años vendiendo destinos nacionales.', shareContact: true }, 'Andrés Muñoz', '+56 9 4444 4444'],
+      ['norte@demo.cl', 'comprador', { companyName: 'Norte Grande Tour Operador', targetMarket: 'Antofagasta y Calama, turismo corporativo', shareContact: false }, 'Fernanda Díaz', '+56 9 5555 5555'],
+      ['pendiente@demo.cl', 'vendedor', { companyName: 'Cabañas Zapallar', serviceTypes: ['alojamiento'], destination: 'Zapallar', products: '6 cabañas frente al mar.', sernaturRegistry: '45678', shareContact: true }, 'Pedro León', '+56 9 6666 6666']
     ];
-    people.forEach(([email, type, pub, contactName, phone]) => {
-      const id = add(email, 'demo1234');
-      const status = email === 'pendiente@demo.cl' ? 'pendiente' : 'aprobada';
-      db.regs[ev][id] = Object.assign({ uid: id, eventId: ev, type, status, serviceTypes: [], destination: '', products: '', sernaturRegistry: '', targetMarket: '', lang: 'es', tz: 'America/Santiago', createdAt: now(), updatedAt: now() }, pub);
-      db.contacts[ev][id] = { uid: id, contactName, email, phone, companions: [] };
+    const tok = {};
+    for (const [email, type, profile, contactName, phone] of people) {
+      const r = await call('signUp', { email, password: 'demo1234' }); tok[email] = r;
+      await call('createRegistration', { eventId: ev, type, profile: Object.assign({ consentData: true, lang: 'es', tz: 'America/Santiago' }, profile), contact: { contactName, phone } }, r.token);
+      if (email !== 'pendiente@demo.cl') await call('setRegistrationStatus', { eventId: ev, uid: r.user.uid, status: 'aprobada' }, S);
+    }
+    await call('updateEvent', { id: ev, patch: { phase: 'agenda' } }, S);
+    // reuniones de ejemplo
+    const d1 = schedule.days[0];
+    const m1 = await call('requestMeeting', { eventId: ev, uid: tok['vendedor@demo.cl'].user.uid, slot: d1 + ' 09:00', note: 'Nos interesan paquetes de fin de semana para familias.' }, tok['comprador@demo.cl'].token);
+    await call('respondMeeting', { eventId: ev, id: m1, accept: true }, tok['vendedor@demo.cl'].token);
+    await call('requestMeeting', { eventId: ev, uid: tok['vendedor@demo.cl'].user.uid, slot: d1 + ' 10:15', note: 'Buscamos alojamiento para grupos corporativos.' }, tok['norte@demo.cl'].token);
+    await call('requestMeeting', { eventId: ev, uid: tok['comprador@demo.cl'].user.uid, slot: d1 + ' 09:50' }, tok['vinos@demo.cl'].token);
+    for (const k of Object.keys(tok)) await call('signOut', {}, tok[k].token);
+    await call('signOut', {}, S); await call('signOut', {}, valpo.token);
+    outbox.length = 0;
+  }
+
+  async function create(cfg) {
+    let fresh = false;
+    const env = window.RN_GasSim.createEnv({
+      load: () => { try { const s = JSON.parse(localStorage.getItem(KEY)); if (!s) fresh = true; return s; } catch (e) { fresh = true; return null; } },
+      save: s => { try { localStorage.setItem(KEY, JSON.stringify(s)); } catch (e) { } },
+      onMail: o => { outbox.push(o); if (mailListener) mailListener(o); }
     });
+    ['SpreadsheetApp', 'PropertiesService', 'Utilities', 'LockService', 'ContentService', 'MailApp'].forEach(k => { window[k] = env[k]; });
+    window.RN_DEMO_SUPERADMINS = ['admin@demo.cl'].concat(cfg.superadminEmails || []);
+    await loadScript('apps-script/Code.gs');
+    const transport = async req => JSON.parse(JSON.stringify(window.handle(req)));
+    const call = (action, args, token) => transport({ action, args, token }).then(j => { if (!j.ok) { const e = new Error(j.message); e.code = j.code; throw e; } return j.data; });
+    if (fresh || !env.state.sheets.Users) {
+      try { localStorage.removeItem(TOKEN_KEY); } catch (e) { }
+      await seed(call);
+    }
+    const db = window.RN_createSheetsDB(cfg, { transport, tokenKey: TOKEN_KEY });
+    db.mode = 'demo';
+    db.resetDemo = () => { try { localStorage.removeItem(KEY); localStorage.removeItem(TOKEN_KEY); } catch (e) { } };
+    db.onMail = cb => { mailListener = cb; };
     return db;
   }
-
-  function currentUser() {
-    const s = getSession(); if (!s) return null;
-    const u = load().users.find(x => x.uid === s); return u ? { uid: u.uid, email: u.email } : null;
-  }
-  function notify() { const u = currentUser(); listeners.forEach(cb => cb(u)); }
-  function superEmails() { return (window.RN_CONFIG.superadminEmails || []).concat(['admin@demo.cl']).map(e => e.toLowerCase()); }
-  function isAdminOfRegion(db, user, regionId) {
-    if (!user) return false;
-    const email = user.email.toLowerCase();
-    if (superEmails().includes(email)) return true;
-    const a = db.admins[email]; return !!(a && a.regionId === regionId);
-  }
-  function requireUser() { const u = currentUser(); if (!u) throw err('permission-denied'); return u; }
-
-  const LocalDB = {
-    mode: 'demo',
-    onAuth(cb) { listeners.push(cb); setTimeout(() => cb(currentUser()), 0); },
-    async signUp(email, pw) {
-      email = String(email).trim().toLowerCase();
-      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw err('auth/invalid-email');
-      if (!pw || pw.length < 6) throw err('auth/weak-password');
-      const db = load();
-      if (db.users.some(u => u.email === email)) throw err('auth/email-already-in-use');
-      const u = { uid: uid(), email, pw }; db.users.push(u); save(db); setSession(u.uid); notify();
-      return { uid: u.uid, email };
-    },
-    async signIn(email, pw) {
-      email = String(email).trim().toLowerCase();
-      const u = load().users.find(x => x.email === email && x.pw === pw);
-      if (!u) throw err('auth/invalid-credential');
-      setSession(u.uid); notify(); return { uid: u.uid, email: u.email };
-    },
-    async signOut() { setSession(null); notify(); },
-    async requestReset() { /* en demo no se envían correos: el código es 123456 */ },
-    async confirmReset(email, code, pw) {
-      email = String(email).trim().toLowerCase();
-      const db = load(); const u = db.users.find(x => x.email === email);
-      if (!u || code !== '123456') throw err('auth/invalid-code');
-      if (!pw || pw.length < 6) throw err('auth/weak-password');
-      u.pw = pw; save(db); setSession(u.uid); notify(); return { uid: u.uid, email: u.email };
-    },
-    async getRoles() {
-      const u = currentUser(); if (!u) return { isSuper: false, admin: null };
-      const a = load().admins[u.email.toLowerCase()];
-      return { isSuper: superEmails().includes(u.email.toLowerCase()), admin: a ? clone(a) : null };
-    },
-    async listAdmins() { const a = load().admins; return Object.keys(a).map(k => Object.assign({ email: k }, a[k])); },
-    async setAdmin(email, data) { const db = load(); db.admins[email.toLowerCase()] = { name: data.name || '', regionId: data.regionId }; save(db); },
-    async removeAdmin(email) { const db = load(); delete db.admins[email.toLowerCase()]; save(db); },
-
-    async listPublicEvents() { return Object.values(load().events).filter(e => e.phase !== 'borrador').map(clone); },
-    async listEventsForAdmin(regionId) {
-      return Object.values(load().events).filter(e => !regionId || e.regionId === regionId).map(clone);
-    },
-    async getEvent(id) {
-      const db = load(); const e = db.events[id]; if (!e) return null;
-      if (e.phase === 'borrador' && !isAdminOfRegion(db, currentUser(), e.regionId)) throw err('permission-denied');
-      return clone(e);
-    },
-    async createEvent(data) {
-      const db = load(); if (!isAdminOfRegion(db, currentUser(), data.regionId)) throw err('permission-denied');
-      const id = 'ev-' + Math.random().toString(36).slice(2, 9);
-      db.events[id] = Object.assign({}, data, { id, createdAt: now(), updatedAt: now() }); db.regs[id] = {}; db.contacts[id] = {};
-      save(db); return id;
-    },
-    async updateEvent(id, patch) {
-      const db = load(); const e = db.events[id]; if (!e) throw err('not-found');
-      const u = currentUser();
-      if (!isAdminOfRegion(db, u, e.regionId) || !isAdminOfRegion(db, u, patch.regionId || e.regionId)) throw err('permission-denied');
-      Object.assign(e, patch, { updatedAt: now() }); save(db);
-    },
-
-    async getRegistration(eventId, id) {
-      const db = load(); const r = (db.regs[eventId] || {})[id]; if (!r) return null;
-      const u = requireUser(); const e = db.events[eventId];
-      const me = (db.regs[eventId] || {})[u.uid];
-      const ok = id === u.uid || isAdminOfRegion(db, u, e.regionId) || (r.status === 'aprobada' && me && me.status === 'aprobada');
-      if (!ok) throw err('permission-denied'); return clone(r);
-    },
-    async listRegistrations(eventId, filter) {
-      filter = filter || {}; const db = load(); const u = requireUser(); const e = db.events[eventId];
-      const isAdm = isAdminOfRegion(db, u, e.regionId);
-      const me = (db.regs[eventId] || {})[u.uid];
-      if (!isAdm && !(filter.status === 'aprobada' && me && me.status === 'aprobada')) throw err('permission-denied');
-      return Object.values(db.regs[eventId] || {}).filter(r => (!filter.status || r.status === filter.status) && (!filter.type || r.type === filter.type)).map(clone);
-    },
-    async listMyRegistrations() {
-      const db = load(); const out = []; const id = requireUser().uid;
-      Object.keys(db.regs).forEach(ev => { const r = db.regs[ev][id]; if (r) out.push(clone(r)); }); return out;
-    },
-    async createRegistration(eventId, type, pub, contact) {
-      const db = load(); const u = requireUser(); const e = db.events[eventId]; const id = u.uid;
-      if (!e || e.phase !== 'inscripcion') throw err('permission-denied');
-      if (!pub.consentData) throw err('invalid');
-      if (db.regs[eventId][id]) throw err('already-exists');
-      db.regs[eventId][id] = Object.assign({}, pub, { type, uid: id, eventId, status: 'pendiente', consentAt: now(), createdAt: now(), updatedAt: now() });
-      db.contacts[eventId][id] = Object.assign({}, contact, { uid: id, email: u.email });
-      save(db);
-    },
-    async updateRegistration(eventId, pub, contact) {
-      const db = load(); const u = requireUser(); const id = u.uid; const r = db.regs[eventId][id];
-      if (!r) throw err('permission-denied');
-      const p = Object.assign({}, pub); ['status', 'type', 'uid', 'eventId'].forEach(k => delete p[k]);
-      Object.assign(r, p, { updatedAt: now() });
-      if (contact) db.contacts[eventId][id] = Object.assign({}, contact, { uid: id, email: u.email });
-      save(db);
-    },
-    async setRegistrationStatus(eventId, id, status) {
-      const db = load(); const e = db.events[eventId];
-      if (!isAdminOfRegion(db, currentUser(), e.regionId)) throw err('permission-denied');
-      db.regs[eventId][id].status = status; db.regs[eventId][id].reviewedAt = now(); save(db);
-    },
-    async getContact(eventId, id) {
-      const db = load(); const u = requireUser(); const e = db.events[eventId];
-      const r = db.regs[eventId][id]; const me = db.regs[eventId][u.uid];
-      const ok = id === u.uid || isAdminOfRegion(db, u, e.regionId) ||
-        (me && me.status === 'aprobada' && r && r.status === 'aprobada' && r.shareContact === true);
-      if (!ok) throw err('permission-denied');
-      return clone(db.contacts[eventId][id] || null);
-    },
-    async listContacts(eventId) {
-      const db = load(); const e = db.events[eventId];
-      if (!isAdminOfRegion(db, currentUser(), e.regionId)) throw err('permission-denied');
-      return Object.values(db.contacts[eventId] || {}).map(clone);
-    },
-
-    resetDemo() { try { localStorage.removeItem(KEY); localStorage.removeItem(SESSION); } catch (e) { } mem = null; memSession = null; }
-  };
-
-  window.RN_LocalDB = LocalDB;
+  window.RN_createDemoDB = create;
 })();

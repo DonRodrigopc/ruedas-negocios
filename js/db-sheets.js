@@ -1,23 +1,28 @@
-// Capa de datos en MODO REAL: Google Apps Script + Google Sheets (gratis).
-// Envía cada operación al script publicado como "Aplicación web" (config.js > apiUrl).
+// Capa de datos: conversa con el servidor (Google Apps Script).
+// En modo real usa la "Aplicación web" publicada (config.js > apiUrl).
+// En modo demo recibe un "transport" que ejecuta el mismo Code.gs dentro del navegador.
 (function () {
-  const TOKEN_KEY = 'rn_token_v1';
-  function getTok() { try { return localStorage.getItem(TOKEN_KEY); } catch (e) { return null; } }
-  function setTok(v) { try { v ? localStorage.setItem(TOKEN_KEY, v) : localStorage.removeItem(TOKEN_KEY); } catch (e) { } }
-
-  function create(cfg) {
-    const url = cfg.apiUrl;
+  function create(cfg, opts) {
+    opts = opts || {};
+    const TOKEN_KEY = opts.tokenKey || 'rn_token_v1';
+    const getTok = () => { try { return localStorage.getItem(TOKEN_KEY); } catch (e) { return null; } };
+    const setTok = v => { try { v ? localStorage.setItem(TOKEN_KEY, v) : localStorage.removeItem(TOKEN_KEY); } catch (e) { } };
     let token = getTok();
     let roles = { isSuper: false, admin: null };
     const listeners = [];
 
-    async function call(action, args) {
+    const httpTransport = async req => {
       let res;
       try {
         // text/plain evita la consulta previa CORS que Apps Script no responde
-        res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify({ action, args: args || {}, token }) });
-      } catch (e) { const x = new Error('network'); x.code = 'network'; throw x; }
-      let j; try { j = await res.json(); } catch (e) { const x = new Error('bad_response'); x.code = 'network'; throw x; }
+        res = await fetch(cfg.apiUrl, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(req) });
+      } catch (e) { return { ok: false, code: 'network' }; }
+      try { return await res.json(); } catch (e) { return { ok: false, code: 'network' }; }
+    };
+    const transport = opts.transport || httpTransport;
+
+    async function call(action, args) {
+      const j = await transport({ action, args: args || {}, token });
       if (!j.ok) {
         const x = new Error(j.message || j.code); x.code = j.code;
         if (j.code === 'unauthenticated') { token = null; setTok(null); emit(null); }
@@ -38,6 +43,7 @@
 
     return {
       mode: 'sheets',
+      call,
       onAuth(cb) { listeners.push(cb); loadMe().then(cb, () => cb(null)); },
       async signUp(email, pw) { return startSession(await call('signUp', { email, password: pw })); },
       async signIn(email, pw) { return startSession(await call('signIn', { email, password: pw })); },
@@ -55,6 +61,7 @@
       getEvent: id => call('getEvent', { id }),
       createEvent: data => call('createEvent', { data }),
       updateEvent: (id, patch) => call('updateEvent', { id, patch }),
+      deleteEvent: id => call('deleteEvent', { id }),
 
       getRegistration: (eventId, uid) => call('getRegistration', { eventId, uid }),
       listRegistrations: (eventId, filter) => call('listRegistrations', { eventId, filter: filter || {} }),
@@ -63,7 +70,17 @@
       updateRegistration: (eventId, profile, contact) => call('updateRegistration', { eventId, profile, contact }),
       setRegistrationStatus: (eventId, uid, status) => call('setRegistrationStatus', { eventId, uid, status }),
       getContact: (eventId, uid) => call('getContact', { eventId, uid }),
-      listContacts: eventId => call('listContacts', { eventId })
+      listContacts: eventId => call('listContacts', { eventId }),
+
+      // agenda
+      getSchedule: eventId => call('getSchedule', { eventId }),
+      getBusy: (eventId, uid) => call('getBusy', { eventId, uid }),
+      listMyMeetings: eventId => call('listMyMeetings', { eventId }),
+      requestMeeting: (eventId, uid, slot, note) => call('requestMeeting', { eventId, uid, slot, note }),
+      respondMeeting: (eventId, id, accept) => call('respondMeeting', { eventId, id, accept }),
+      cancelMeeting: (eventId, id) => call('cancelMeeting', { eventId, id }),
+      setBlock: (eventId, slot, blocked) => call('setBlock', { eventId, slot, blocked }),
+      listMeetings: eventId => call('listMeetings', { eventId })
     };
   }
   window.RN_createSheetsDB = create;

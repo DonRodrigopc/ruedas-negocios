@@ -14,7 +14,7 @@
   const PHASES = ['borrador', 'inscripcion', 'agenda', 'reuniones', 'cerrado'];
   const PHASE_ADMIN = {
     borrador: 'Borrador (no visible al público)', inscripcion: 'Inscripciones abiertas',
-    agenda: 'Agenda abierta (se habilita en etapa 2)', reuniones: 'Día de reuniones (etapa 3)', cerrado: 'Cerrado'
+    agenda: 'Agenda abierta (solicitud de reuniones)', reuniones: 'Día de reuniones (agenda cerrada)', cerrado: 'Cerrado'
   };
   const MARKETS = ['Nacional', 'Brasil', 'Argentina', 'Europa', 'Estados Unidos', 'Asia', 'Otro'];
   const STATUS_ADMIN = { pendiente: 'Pendiente', aprobada: 'Aprobada', rechazada: 'Rechazada' };
@@ -58,7 +58,60 @@
     if (c === 'network') return t('err_network');
     if (c.includes('permission-denied') || c === 'unauthenticated') return t('no_access');
     if (c === 'invalid') return t('required');
+    const map = { 'slot-taken': 'err_slot_taken', 'slot-invalid': 'err_slot_taken', 'pair-exists': 'err_pair', 'too-many': 'err_too_many', 'me-busy': 'err_me_busy', 'too-late': 'too_late', closed: 'agenda_closed', 'not-pending': 'err_not_pending' };
+    if (map[c]) return t(map[c]);
     console.error(e); return t('err_generic');
+  }
+  // En administración mostramos el mensaje del servidor (siempre en español)
+  function adminErr(e) { return (e && e.message && e.message !== e.code) ? e.message : errMsg(e); }
+
+  // ---------- horarios ----------
+  const USER_TZ = (Intl.DateTimeFormat().resolvedOptions().timeZone) || 'America/Santiago';
+  const LOCALES = { es: 'es-CL', en: 'en-US', pt: 'pt-BR' };
+  const loc = () => LOCALES[S.lang] || 'es-CL';
+  function fmtTime(iso, tz) { return new Intl.DateTimeFormat(loc(), { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: tz || USER_TZ }).format(new Date(iso)); }
+  function fmtDay(iso, tz) { const s = new Intl.DateTimeFormat(loc(), { weekday: 'long', day: 'numeric', month: 'long', timeZone: tz || USER_TZ }).format(new Date(iso)); return s.charAt(0).toUpperCase() + s.slice(1); }
+  function slotText(slot, evTz) {
+    if (!slot) return '';
+    const local = `${fmtDay(slot.start)} · ${fmtTime(slot.start)}–${fmtTime(slot.end)}`;
+    const ch = fmtTime(slot.start, evTz);
+    return ch !== fmtTime(slot.start) || USER_TZ !== evTz ? `${local} (${ch} ${t('chile_time')})` : local;
+  }
+  function groupByDay(slots) {
+    const g = []; const idx = {};
+    slots.forEach(s => { const k = fmtDay(s.start); if (!(k in idx)) { idx[k] = g.length; g.push({ day: k, slots: [] }); } g[idx[k]].slots.push(s); });
+    return g;
+  }
+  const meetingBadge = st => `<span class="badge mt-${esc(st)}">${esc(t('m_' + st))}</span>`;
+
+  // ---------- logos ----------
+  function logoHtml(r, cls) {
+    const logo = r && r.logo && /^data:image\/(webp|png|jpeg);base64,/.test(r.logo) ? r.logo : '';
+    return logo ? `<img class="avatar logo-img ${cls || ''}" src="${esc(logo)}" alt="">` : `<div class="avatar ${cls || ''}">${initials(r && r.companyName)}</div>`;
+  }
+  function resizeLogo(file) {
+    return new Promise((res, rej) => {
+      const url = URL.createObjectURL(file); const img = new Image();
+      img.onload = () => {
+        const encode = (max, opaque) => {
+          const k = Math.min(1, max / Math.max(img.width, img.height));
+          const c = document.createElement('canvas'); c.width = Math.max(1, Math.round(img.width * k)); c.height = Math.max(1, Math.round(img.height * k));
+          const g = c.getContext('2d');
+          if (opaque) { g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); }
+          g.drawImage(img, 0, 0, c.width, c.height);
+          if (opaque) return c.toDataURL('image/jpeg', 0.82);
+          const w = c.toDataURL('image/webp', 0.85);
+          return w.indexOf('data:image/webp') === 0 ? w : c.toDataURL('image/png');
+        };
+        let out = encode(200, false);
+        if (out.length > 46000) out = encode(160, true);
+        if (out.length > 46000) out = encode(110, true);
+        URL.revokeObjectURL(url);
+        out.length > 46000 ? rej(new Error('big')) : res(out);
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); rej(new Error('img')); };
+      img.src = url;
+    });
   }
   function showError(form, msg) { const box = $('.form-msg', form); if (box) { box.className = 'form-msg error'; box.textContent = msg; box.scrollIntoView({ block: 'center', behavior: 'smooth' }); } }
   function showOk(form, msg) { const box = $('.form-msg', form); if (box) { box.className = 'form-msg ok'; box.textContent = msg; } }
@@ -165,6 +218,7 @@
     [/^#\/evento\/([^/]+)\/inscripcion$/, id => ({ html: '', bind() { go('#/evento/' + enc(id)); } })],
     [/^#\/evento\/([^/]+)\/perfil$/, viewProfile],
     [/^#\/evento\/([^/]+)\/catalogo$/, viewCatalog],
+    [/^#\/evento\/([^/]+)\/agenda$/, viewAgenda],
     [/^#\/evento\/([^/]+)\/empresa\/([^/]+)$/, viewCompany],
     [/^#\/ingresar$/, viewLogin],
     [/^#\/mi$/, viewMine],
@@ -243,9 +297,10 @@
       <span class="chip">${t('reg_period')}: <strong>${fmtDate(ev.regStart)} → ${fmtDate(ev.regEnd)}</strong></span>
       <span class="chip">${t('meeting_dates')}: <strong>${esc(ev.meetingDates || '—')}</strong></span></div>`;
   }
-  function myStatusBox(mine) {
+  function myStatusBox(mine, ev) {
+    const agenda = ev && mine.status === 'aprobada' && ['agenda', 'reuniones', 'cerrado'].includes(ev.phase);
     return `<div class="card status-box"><div><p class="kicker">${t('my_status')}</p><p><strong>${esc(mine.companyName)}</strong> · ${t('role_' + mine.type)} ${statusBadge(mine.status)}</p></div>
-      <a class="btn" href="#/mi">${t('go_account')}</a></div>`;
+      ${agenda ? `<a class="btn btn-primary" href="#/evento/${enc(ev.id)}/agenda">${t('agenda')}</a>` : `<a class="btn" href="#/mi">${t('go_account')}</a>`}</div>`;
   }
 
   async function viewEvent(id) {
@@ -262,7 +317,7 @@
     return {
       html: hero({ size: 'md', photos: photosFor(ev), kicker: `<span class="badge ph-${esc(ev.phase)}">${esc(phaseLabel(ev.phase))}</span> ${esc(regionName(ev.regionId))}`, title: ev.name, extra: eventFacts(ev) })
         + `<div class="container page">
-          ${mine ? myStatusBox(mine) : ''}
+          ${mine ? myStatusBox(mine, ev) : ''}
           ${ev.description ? `<p class="intro pre">${esc(ev.description)}</p>` : ''}
           ${ev.phase !== 'inscripcion' && !mine ? `<p class="notice">${t('reg_closed')}</p>` : ''}
           <div class="roles">${roleCard('vendedor')}${roleCard('comprador')}</div>
@@ -278,7 +333,7 @@
     const mine = await myRegFor(id);
     const benefits = t('benefits_' + type).split('|');
     let cta;
-    if (mine) cta = myStatusBox(mine);
+    if (mine) cta = myStatusBox(mine, ev);
     else if (ev.phase === 'inscripcion') cta = `<a class="btn btn-primary btn-lg" href="#/evento/${enc(id)}/inscripcion/${type}">${t('reg_as_' + type)}</a>
         ${S.user ? '' : `<p class="small muted">${t('have_account')} <a href="#/ingresar" id="lnk-login">${t('nav_login')}</a></p>`}`;
     else cta = `<p class="notice">${t('reg_closed')}</p>`;
@@ -306,6 +361,16 @@
     return `
       <fieldset><legend>${t('company_section')}</legend>
         <label>${t('company_name')} *<input name="companyName" maxlength="120" value="${esc(reg.companyName)}"></label>
+        <div class="label">${t('logo')}</div>
+        <div class="logo-field">
+          <div class="logo-preview">${logoHtml(reg, 'avatar-lg')}</div>
+          <div>
+            <label class="btn btn-small">${t('logo_upload')}<input type="file" accept="image/png,image/jpeg,image/webp" class="logo-file" hidden></label>
+            <button type="button" class="link logo-remove"${reg.logo ? '' : ' hidden'}>${t('logo_remove')}</button>
+            <p class="small muted">${t('logo_hint')}</p>
+          </div>
+          <input type="hidden" name="logo" value="${esc(reg.logo)}">
+        </div>
         ${seller ? `
           <div class="label">${t('service_types')} *</div><div class="checks">${services}</div>
           <label>${t('destination')} *<input name="destination" maxlength="120" placeholder="${esc(t('destination_ph'))}" value="${esc(reg.destination)}"></label>
@@ -335,7 +400,7 @@
   // Lee y valida el formulario. Devuelve {pub, contact} o {error}
   function readProfile(form, type, existing) {
     const pub = {
-      companyName: val(form, 'companyName'), description: val(form, 'description'), website: val(form, 'website'),
+      companyName: val(form, 'companyName'), logo: val(form, 'logo'), description: val(form, 'description'), website: val(form, 'website'),
       shareContact: !!form.elements.shareContact.checked, lang: val(form, 'lang') || S.lang, tz: val(form, 'tz'),
       serviceTypes: [], destination: '', products: '', sernaturRegistry: '', targetMarket: ''
     };
@@ -357,13 +422,25 @@
     return { pub, contact };
   }
 
+  function bindLogo(form) {
+    const file = $('.logo-file', form), hidden = form.elements.logo, prev = $('.logo-preview', form), rm = $('.logo-remove', form);
+    const show = () => { prev.innerHTML = logoHtml({ logo: hidden.value, companyName: val(form, 'companyName') }, 'avatar-lg'); rm.hidden = !hidden.value; };
+    file.onchange = async () => {
+      const f = file.files && file.files[0]; if (!f) return;
+      try { hidden.value = await resizeLogo(f); show(); } catch (e) { showError(form, t('logo_err')); }
+      file.value = '';
+    };
+    rm.onclick = () => { hidden.value = ''; show(); };
+    form.elements.companyName.addEventListener('input', () => { if (!hidden.value) show(); });
+  }
+
   async function viewRegister(id, type) {
     const ev = await DB.getEvent(id);
     if (!ev) return notFound();
     const head = `<p class="small"><a href="#/evento/${enc(id)}/${type}es">← ${esc(ev.name)}</a></p>` + pageHead(`<span class="role-dot">${ICON[type]}</span> ${t('for_' + type)}`, t('reg_title_' + type), esc(ev.name));
     if (ev.phase !== 'inscripcion') return { html: page(head + `<div class="card narrow"><p>${t('reg_closed')}</p></div>`) };
     const mine = await myRegFor(id);
-    if (mine) return { html: page(head + myStatusBox(mine)) };
+    if (mine) return { html: page(head + myStatusBox(mine, ev)) };
     const account = S.user ? `<p class="muted small">${t('email')}: <strong>${esc(S.user.email)}</strong></p>` : `
       <fieldset><legend>${t('account_section')}</legend>
         <p class="small">${t('have_account')} <a href="#/ingresar" id="lnk-login">${t('nav_login')}</a></p>
@@ -376,7 +453,7 @@
         <form id="f-reg" novalidate>${account}${profileFields(type, null, null)}
         <div class="form-msg" role="alert"></div><button class="btn btn-primary btn-lg" type="submit">${t('submit_reg')}</button></form></div>`),
       bind(root) {
-        const form = $('#f-reg', root);
+        const form = $('#f-reg', root); bindLogo(form);
         const ll = $('#lnk-login', root); if (ll) ll.onclick = () => { S.next = location.hash; };
         form.onsubmit = async e => {
           e.preventDefault();
@@ -412,7 +489,7 @@
         <div class="form-msg" role="alert"></div><div class="actions"><button class="btn btn-primary" type="submit">${t('save')}</button>
         <a class="btn btn-ghost" href="#/mi">${t('back')}</a></div></form></div>`),
       bind(root) {
-        const form = $('#f-prof', root);
+        const form = $('#f-prof', root); bindLogo(form);
         form.onsubmit = async e => {
           e.preventDefault();
           const data = readProfile(form, reg.type, reg); if (data.error) return showError(form, data.error);
@@ -490,6 +567,7 @@
     const items = rows.filter(x => x.ev).map(({ r, ev }) => {
       const eid = enc(ev.id);
       const canCatalog = r.status === 'aprobada' && ev.phase !== 'borrador';
+      const canAgenda = r.status === 'aprobada' && ['agenda', 'reuniones', 'cerrado'].includes(ev.phase);
       return `<article class="card mine">
         <div class="mine-photo" data-photo="${esc(JSON.stringify(photosFor(ev)))}"></div>
         <div class="mine-body">
@@ -497,8 +575,10 @@
           <h3>${esc(ev.name)}</h3>
           <p class="muted">${esc(r.companyName)} · ${t('as')} ${t('role_' + r.type).toLowerCase()}</p>
           ${r.status === 'pendiente' ? `<p class="small">${t('pending_note')}</p>` : ''}
+          ${canAgenda && ev.phase === 'agenda' ? `<p class="small ok-note">${t('agenda_open_cta')}</p>` : ''}
           <div class="actions">
-            ${canCatalog ? `<a class="btn btn-primary" href="#/evento/${eid}/catalogo">${t('catalog')}</a>` : ''}
+            ${canAgenda ? `<a class="btn btn-primary" href="#/evento/${eid}/agenda">${t('agenda')}</a>` : ''}
+            ${canCatalog ? `<a class="btn ${canAgenda ? '' : 'btn-primary'}" href="#/evento/${eid}/catalogo">${t('catalog')}</a>` : ''}
             <a class="btn" href="#/evento/${eid}/perfil">${t('edit_profile')}</a>
             <a class="btn btn-ghost" href="#/evento/${eid}">${t('view_event')}</a>
           </div></div></article>`;
@@ -528,7 +608,8 @@
     let showType = approved ? (me.type === 'vendedor' ? 'comprador' : 'vendedor') : 'vendedor';
     const eid = enc(id);
     return {
-      html: page(`<p class="small"><a href="#/evento/${eid}">← ${esc(ev.name)}</a></p>` + pageHead(t('catalog'), '', '') + `
+      html: page(`<p class="small"><a href="#/evento/${eid}">← ${esc(ev.name)}</a></p>` + pageHead(t('catalog'), '', '') +
+        (ev.phase === 'agenda' && approved ? `<div class="card status-box"><p>${t('agenda_open_cta')}</p><a class="btn btn-primary" href="#/evento/${eid}/agenda">${t('agenda')}</a></div>` : '') + `
         <div class="filters card">
           ${!approved ? `<select id="cat-type" aria-label="Tipo"><option value="vendedor">${t('catalog_sellers')}</option><option value="comprador">${t('catalog_buyers')}</option></select>` : ''}
           <input id="cat-q" type="search" placeholder="${esc(t('search'))}" aria-label="${esc(t('search'))}">
@@ -536,7 +617,7 @@
         </div>
         <p class="muted small" id="cat-count"></p>
         <div class="grid" id="cat-list"></div>
-        <p class="notice">${t('agenda_soon')}</p>`),
+        ${ev.phase === 'agenda' && approved ? '' : `<p class="notice">${ev.phase === 'inscripcion' ? t('agenda_soon') : t('agenda_closed')}</p>`}`),
       bind(root) {
         const draw = () => {
           const q = ($('#cat-q', root).value || '').toLowerCase().trim();
@@ -549,9 +630,9 @@
             .sort((a, b) => a.companyName.localeCompare(b.companyName));
           $('#cat-count', root).textContent = `${list.length} ${t('results')}`;
           $('#cat-list', root).innerHTML = list.length ? list.map(r => `<a class="card company" href="#/evento/${eid}/empresa/${enc(r.uid)}">
-              <div class="avatar">${initials(r.companyName)}</div>
+              ${logoHtml(r)}
               <h3>${esc(r.companyName)}</h3>${companySummary(r)}
-              <span class="more">${t('view_company')} →</span></a>`).join('')
+              <span class="more">${ev.phase === 'agenda' && approved ? t('request_meeting') : t('view_company')} →</span></a>`).join('')
             : `<p class="muted">${t('no_results')}</p>`;
         };
         $('#cat-q', root).oninput = draw; $('#cat-svc', root).onchange = draw;
@@ -568,22 +649,155 @@
     if (!ev || !r) return notFound();
     let contact = null;
     try { contact = await DB.getContact(id, uid); } catch (e) { contact = null; }
+    const me = await myRegFor(id);
+    const canBook = ev.phase === 'agenda' && me && me.status === 'aprobada' && me.type !== r.type;
+    let booking = '';
+    let sched = null, mine = null, busyT = [];
+    if (canBook) {
+      [sched, mine, busyT] = await Promise.all([DB.getSchedule(id), DB.listMyMeetings(id), DB.getBusy(id, uid)]);
+      const active = mine.meetings.find(m => m.other && m.other.uid === uid && (m.status === 'pendiente' || m.status === 'aceptada'));
+      const slotMap = {}; sched.slots.forEach(s => { slotMap[s.id] = s; });
+      if (active) {
+        const msg = active.status === 'aceptada' ? t('existing_confirmed') : active.incoming ? t('existing_incoming') : t('existing_pending');
+        booking = `<div class="booking card"><h2>${t('request_meeting')}</h2><p>${msg}</p><p><strong>${esc(slotText(slotMap[active.slot], sched.tz))}</strong> ${meetingBadge(active.status)}</p>
+          <a class="btn btn-primary" href="#/evento/${enc(id)}/agenda">${t('agenda')}</a></div>`;
+      } else if (!sched.slots.length) {
+        booking = `<div class="booking card"><h2>${t('request_meeting')}</h2><p class="muted">${t('no_slots')}</p></div>`;
+      } else {
+        const myBusy = {}; mine.meetings.forEach(m => { if (m.status === 'aceptada') myBusy[m.slot] = 1; }); mine.blocks.forEach(b => { myBusy[b] = 1; });
+        const theirs = {}; busyT.forEach(b => { theirs[b] = 1; });
+        const sentPending = mine.meetings.filter(m => !m.incoming && m.status === 'pendiente').length;
+        const now = Date.now();
+        booking = `<div class="booking card" id="booking"><h2>${t('request_meeting')}</h2>
+          <p class="small muted">${t('choose_slot')} · ${t('your_tz_note')}: <strong>${esc(USER_TZ)}</strong></p>
+          <div class="slot-days">${groupByDay(sched.slots).map(g => `<div class="slot-day"><h3>${esc(g.day)}</h3><div class="slot-grid">${g.slots.map(s => {
+            const past = Date.parse(s.start) <= now, busy = theirs[s.id], mineB = myBusy[s.id];
+            const dis = past || busy || mineB;
+            return `<button type="button" class="slot${dis ? ' slot-off' : ''}" data-slot="${esc(s.id)}"${dis ? ' disabled' : ''} title="${esc(busy ? t('blocked') : mineB ? t('err_me_busy') : '')}">${fmtTime(s.start)}</button>`;
+          }).join('')}</div></div>`).join('')}</div>
+          <form id="f-book" hidden novalidate>
+            <p class="selected-slot"><span class="kicker">${t('selected')}</span><strong id="sel-slot"></strong></p>
+            <label>${t('note_ph')}<textarea name="note" rows="2" maxlength="300"></textarea></label>
+            <div class="form-msg" role="alert"></div>
+            <button class="btn btn-primary" type="submit">${t('send_request')}</button>
+          </form>
+          <p class="small muted">${t('pending_count')}: ${sentPending} / ${sched.rules.maxPending}. ${t('rules_note')}</p></div>`;
+      }
+    }
     const contactHtml = contact ? `<dl class="facts">
         <dt>${t('contact_name')}</dt><dd>${esc(contact.contactName)}</dd>
         <dt>${t('email')}</dt><dd><a href="mailto:${esc(contact.email)}">${esc(contact.email)}</a></dd>
         <dt>${t('phone')}</dt><dd>${esc(contact.phone)}</dd></dl>` : `<p class="muted">${t('no_share')}</p>`;
     return {
       html: page(`<p class="small"><a href="#/evento/${enc(id)}/catalogo">← ${t('catalog')}</a></p>
-      <article class="card narrow company-detail">
-        <div class="row-start"><div class="avatar avatar-lg">${initials(r.companyName)}</div>
+      <div class="company-layout">
+      <article class="card company-detail">
+        <div class="row-start">${logoHtml(r, 'avatar-lg')}
         <div><span class="badge">${t('role_' + r.type)}</span><h1>${esc(r.companyName)}</h1></div></div>
         ${companySummary(r)}
         ${r.type === 'vendedor' ? `<h3>${t('products')}</h3><p class="pre">${esc(r.products)}</p>` : ''}
         ${r.description ? `<p class="pre">${esc(r.description)}</p>` : ''}
         ${r.website && /^https?:\/\//i.test(r.website) ? `<p><a href="${esc(r.website)}" target="_blank" rel="noopener">${esc(r.website)}</a></p>` : ''}
         <h3>${t('contact')}</h3>${contactHtml}
-        <p class="notice">${t('agenda_soon')}</p>
-      </article>`)
+        ${canBook ? '' : `<p class="notice">${ev.phase === 'inscripcion' ? t('agenda_soon') : t('agenda_closed')}</p>`}
+      </article>
+      ${booking}
+      </div>`),
+      bind(root) {
+        const form = $('#f-book', root); if (!form) return;
+        let chosen = null;
+        $$('.slot[data-slot]', root).forEach(b => b.onclick = () => {
+          $$('.slot.on', root).forEach(x => x.classList.remove('on')); b.classList.add('on');
+          chosen = b.getAttribute('data-slot');
+          const sl = sched.slots.find(s => s.id === chosen);
+          $('#sel-slot', root).textContent = slotText(sl, sched.tz);
+          form.hidden = false; form.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        });
+        form.onsubmit = async e => {
+          e.preventDefault(); if (!chosen) return;
+          const btn = $('button[type=submit]', form); btn.disabled = true; btn.textContent = t('sending');
+          try {
+            await DB.requestMeeting(id, uid, chosen, val(form, 'note'));
+            S.flash = { type: 'ok', msg: t('request_sent') }; render();
+          } catch (err) { showError(form, errMsg(err)); btn.disabled = false; btn.textContent = t('send_request'); }
+        };
+      }
+    };
+  }
+
+  // ---------- agenda del participante ----------
+  async function viewAgenda(id) {
+    if (!S.user) return needLogin();
+    const ev = await DB.getEvent(id);
+    if (!ev) return notFound();
+    const me = await myRegFor(id);
+    if (!me || me.status !== 'aprobada') {
+      if (isAdminOf(ev.regionId)) return { html: '', bind() { go('#/admin/evento/' + enc(id)); } };
+      return { html: page(pageHead('', t('agenda')) + `<div class="card narrow"><p>${t('pending_note')}</p></div>`) };
+    }
+    const [sched, mine] = await Promise.all([DB.getSchedule(id), DB.listMyMeetings(id)]);
+    const slotMap = {}; sched.slots.forEach(s => { slotMap[s.id] = s; });
+    const open = ev.phase === 'agenda';
+    const bySlot = (a, b) => String(a.slot).localeCompare(String(b.slot));
+    const ms = mine.meetings.slice().sort(bySlot);
+    const received = ms.filter(m => m.incoming && m.status === 'pendiente');
+    const sent = ms.filter(m => !m.incoming && m.status === 'pendiente');
+    const confirmed = ms.filter(m => m.status === 'aceptada');
+    const past = ms.filter(m => ['rechazada', 'cancelada', 'vencida', 'anulada'].includes(m.status));
+    const cancelMs = sched.rules.cancelHours * 3600000;
+    const eid = enc(id);
+    const who = m => `<a class="who" href="#/evento/${eid}/empresa/${enc(m.other ? m.other.uid : '')}">${logoHtml(m.other)}<span><strong>${esc(m.other ? m.other.companyName : '—')}</strong><small>${m.other ? t('role_' + m.other.type) : ''}</small></span></a>`;
+    const when = m => `<div class="when">${esc(slotText(slotMap[m.slot], sched.tz)) || esc(m.slot)}</div>`;
+    const note = m => m.note ? `<p class="m-note">“${esc(m.note)}”</p>` : '';
+    const row = (m, actions) => `<div class="m-row">${who(m)}<div class="m-info">${when(m)}${note(m)}</div><div class="m-act">${actions}</div></div>`;
+    const section = (title, list, render, extra) => `<section class="card"><div class="row-between"><h2>${title} <span class="count">${list.length}</span></h2>${extra || ''}</div>${list.length ? list.map(render).join('') : `<p class="muted">${t('none_yet')}</p>`}</section>`;
+    const blocks = {}; mine.blocks.forEach(b => { blocks[b] = 1; });
+    const meetAt = {}; confirmed.forEach(m => { meetAt[m.slot] = m; });
+    const now = Date.now();
+    const grid = sched.slots.length ? groupByDay(sched.slots).map(g => `<div class="slot-day"><h3>${esc(g.day)}</h3><div class="slot-grid">${g.slots.map(s => {
+      const m = meetAt[s.id], b = blocks[s.id], past = Date.parse(s.start) <= now;
+      if (m) return `<div class="slot slot-meet" title="${esc(m.other ? m.other.companyName : '')}">${fmtTime(s.start)}<small>${esc(m.other ? m.other.companyName : '')}</small></div>`;
+      return `<button type="button" class="slot ${b ? 'slot-blocked' : ''}" data-block="${esc(s.id)}" data-on="${b ? 1 : 0}"${past || !open ? ' disabled' : ''}>${fmtTime(s.start)}<small>${b ? t('blocked') : t('free')}</small></button>`;
+    }).join('')}</div></div>`).join('') : `<p class="muted">${t('no_slots')}</p>`;
+    return {
+      html: page(`<p class="small"><a href="#/mi">← ${t('nav_mine')}</a></p>` + pageHead(esc(ev.name), t('agenda'), `${esc(me.companyName)} · ${t('your_tz_note')}: ${esc(USER_TZ)}`) + `
+        <div class="stats">
+          <div class="stat stat-ok"><span>${confirmed.length}</span>${t('confirmed')}</div>
+          <div class="stat stat-warn"><span>${received.length}</span>${t('received')}</div>
+          <div class="stat"><span>${sent.length}/${sched.rules.maxPending}</span>${t('pending_count')}</div>
+        </div>
+        ${open ? `<div class="card status-box"><p>${t('agenda_open_cta')}</p><a class="btn btn-primary" href="#/evento/${eid}/catalogo">${t('catalog')}</a></div>` : `<p class="notice">${t('agenda_closed')}</p>`}
+        ${section(t('received'), received, m => row(m, open ? `<button class="btn btn-small btn-primary" data-resp="1" data-id="${esc(m.id)}">${t('accept')}</button><button class="btn btn-small" data-resp="0" data-id="${esc(m.id)}">${t('reject')}</button>` : meetingBadge(m.status)))}
+        ${section(t('confirmed'), confirmed, m => {
+          const sl = slotMap[m.slot]; const can = sl && Date.parse(sl.start) - now >= cancelMs;
+          return row(m, `${meetingBadge('aceptada')}<p class="small muted">${t('video_soon')}</p>${can ? `<button class="btn btn-small btn-danger" data-cancel="${esc(m.id)}">${t('cancel_meeting')}</button>` : `<p class="small muted">${t('too_late')}</p>`}`);
+        })}
+        ${section(t('sent'), sent, m => row(m, `${meetingBadge('pendiente')}<button class="btn btn-small btn-ghost" data-cancel="${esc(m.id)}">${t('withdraw')}</button>`))}
+        <section class="card"><h2>${t('availability')}</h2><p class="small muted">${t('availability_help')}</p><div class="slot-days">${grid}</div></section>
+        ${past.length ? `<details class="card history"><summary><h2>${t('history')} <span class="count">${past.length}</span></h2></summary>${past.map(m => row(m, meetingBadge(m.status))).join('')}</details>` : ''}
+        <p class="small muted">${t('rules_note')}</p>
+        <div class="form-msg" id="agenda-msg" role="alert"></div>`),
+      bind(root) {
+        const fail = err => { const b = $('#agenda-msg', root); b.className = 'form-msg error'; b.textContent = errMsg(err); b.scrollIntoView({ block: 'center' }); };
+        const busy = el => { $$('button', root).forEach(x => { x.disabled = true; }); el.textContent = t('sending'); };
+        $$('[data-resp]', root).forEach(b => b.onclick = async () => {
+          busy(b);
+          try { await DB.respondMeeting(id, b.getAttribute('data-id'), b.getAttribute('data-resp') === '1'); render(); } catch (err) { await render(); fail(err); }
+        });
+        $$('[data-cancel]', root).forEach(b => b.onclick = async () => {
+          busy(b);
+          try { await DB.cancelMeeting(id, b.getAttribute('data-cancel')); render(); } catch (err) { await render(); fail(err); }
+        });
+        $$('[data-block]', root).forEach(b => b.onclick = async () => {
+          const on = b.getAttribute('data-on') === '1'; b.disabled = true;
+          try {
+            await DB.setBlock(id, b.getAttribute('data-block'), !on);
+            b.setAttribute('data-on', on ? '0' : '1'); b.classList.toggle('slot-blocked', !on);
+            $('small', b).textContent = on ? t('free') : t('blocked');
+          } catch (err) { fail(err); }
+          b.disabled = false;
+        });
+      }
     };
   }
 
@@ -655,7 +869,7 @@
           e.preventDefault();
           const r = readEventForm(fe, region); if (r.error) return showError(fe, r.error);
           try { const id = await DB.createEvent(r.data); S.flash = { type: 'ok', msg: 'Evento creado.' }; go('#/admin/evento/' + enc(id)); }
-          catch (err) { showError(fe, errMsg(err)); }
+          catch (err) { showError(fe, adminErr(err)); }
         };
         const fa = $('#f-admin', root);
         if (fa) fa.onsubmit = async e => {
@@ -663,12 +877,12 @@
           const email = val(fa, 'email').toLowerCase();
           if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return showError(fa, 'Correo no válido.');
           try { await DB.setAdmin(email, { name: val(fa, 'name'), regionId: val(fa, 'regionId') }); S.flash = { type: 'ok', msg: 'Administrador agregado.' }; render(); }
-          catch (err) { showError(fa, errMsg(err)); }
+          catch (err) { showError(fa, adminErr(err)); }
         };
         $$('[data-rm]', root).forEach(b => b.onclick = async () => {
           b.disabled = true;
           try { await DB.removeAdmin(b.getAttribute('data-rm')); S.flash = { type: 'ok', msg: 'Administrador quitado.' }; render(); }
-          catch (err) { b.disabled = false; alertBox(root, errMsg(err)); }
+          catch (err) { b.disabled = false; alertBox(root, adminErr(err)); }
         });
       }
     };
@@ -692,8 +906,13 @@
     const ev = await DB.getEvent(id);
     if (!ev) return notFound();
     if (!isAdminOf(ev.regionId)) return denied();
-    const [regs, contacts] = await Promise.all([DB.listRegistrations(id), DB.listContacts(id)]);
+    const [regs, contacts, meetings, sched] = await Promise.all([DB.listRegistrations(id), DB.listContacts(id), DB.listMeetings(id), DB.getSchedule(id)]);
     const cmap = {}; contacts.forEach(c => { cmap[c.uid] = c; });
+    const rmap = {}; regs.forEach(r => { rmap[r.uid] = r; });
+    const slotMap = {}; sched.slots.forEach(s => { slotMap[s.id] = s; });
+    const sc = ev.schedule || { days: [], start: '09:00', end: '13:00', slot: 20, gap: 5 };
+    const mcount = st => meetings.filter(m => m.status === st).length;
+    const mRows = meetings.slice().sort((a, b) => a.slot.localeCompare(b.slot)).map(m => `<tr><td>${esc(m.slot)}</td><td>${esc((rmap[m.sellerUid] || {}).companyName)}</td><td>${esc((rmap[m.buyerUid] || {}).companyName)}</td><td>${esc((rmap[m.requesterUid] || {}).type === 'vendedor' ? 'Vendedor' : 'Comprador')}</td><td><span class="badge mt-${esc(m.status)}">${esc({ pendiente: 'Pendiente', aceptada: 'Confirmada', rechazada: 'Rechazada', cancelada: 'Cancelada', vencida: 'Vencida', anulada: 'Anulada' }[m.status] || m.status)}</span></td></tr>`).join('');
     const count = (type, st) => regs.filter(r => (!type || r.type === type) && (!st || r.status === st)).length;
     const base = location.href.split('#')[0];
     const linkRow = (type, label) => `<div class="link-row"><span class="role-dot">${ICON[type]}</span><div class="link-col"><strong>${label}</strong>
@@ -712,6 +931,31 @@
         ${linkRow('vendedor', 'Vendedores')}${linkRow('comprador', 'Compradores')}
         <p class="small"><a href="#/evento/${enc(id)}">Ver página pública →</a> · <a href="#/evento/${enc(id)}/catalogo">Ver catálogo de aprobados →</a></p>
       </section>
+      <section class="card"><h2>Grilla de reuniones (hora de Chile)</h2>
+        <p class="small muted">Define los días y el horario. Todos los participantes usan los mismos bloques. Configúrala antes de pasar el evento a "Agenda abierta".</p>
+        <form id="f-sched" novalidate>
+          <div class="label">Días de reuniones</div>
+          <div class="day-chips" id="day-chips"></div>
+          <div class="inline-form"><input type="date" id="day-new" aria-label="Agregar día"><button class="btn btn-small" type="button" id="day-add">+ Agregar día</button></div>
+          <div class="four">
+            <label>Inicio<input type="time" name="start" value="${esc(sc.start)}"></label>
+            <label>Término<input type="time" name="end" value="${esc(sc.end)}"></label>
+            <label>Minutos por reunión<input type="number" name="slot" min="5" max="120" step="5" value="${esc(sc.slot)}"></label>
+            <label>Pausa entre reuniones<input type="number" name="gap" min="0" max="60" step="5" value="${esc(sc.gap)}"></label>
+          </div>
+          <p class="small" id="sched-preview"></p>
+          <div class="form-msg"></div>
+          <button class="btn btn-primary" type="submit">Guardar grilla</button>
+        </form>
+      </section>
+      <section class="card"><h2>Reuniones</h2>
+        <div class="stats">
+          <div class="stat stat-ok"><span>${mcount('aceptada')}</span>confirmadas</div>
+          <div class="stat stat-warn"><span>${mcount('pendiente')}</span>solicitudes pendientes</div>
+          <div class="stat"><span>${mcount('rechazada') + mcount('cancelada') + mcount('vencida') + mcount('anulada')}</span>rechazadas, canceladas o vencidas</div>
+        </div>
+        ${meetings.length ? `<p><button class="btn" id="btn-csv-m">Descargar reuniones (CSV)</button></p><div class="table-wrap"><table><thead><tr><th>Bloque (Chile)</th><th>Vendedor</th><th>Comprador</th><th>Solicitó</th><th>Estado</th></tr></thead><tbody>${mRows}</tbody></table></div>` : '<p class="muted">Aún no hay solicitudes de reunión.</p>'}
+      </section>
       <section class="card"><h2>Inscripciones</h2>
         <div class="filters">
           <select id="flt-st" aria-label="Estado"><option value="">Todos los estados</option><option value="pendiente" selected>Pendientes</option><option value="aprobada">Aprobadas</option><option value="rechazada">Rechazadas</option></select>
@@ -723,6 +967,15 @@
       </section>
       <section class="card"><h2>Datos del evento</h2>
         <form id="f-ev" novalidate>${eventFormFields(ev, lockRegion)}<div class="form-msg"></div><button class="btn btn-primary" type="submit">Guardar evento</button></form>
+      </section>
+      <section class="card danger-zone"><h2>Eliminar evento</h2>
+        <p class="small">Se borra el evento con todas sus inscripciones, contactos y reuniones. No se puede deshacer. Antes, descarga los Excel si necesitas respaldo.</p>
+        <button class="btn btn-danger" id="btn-del">Eliminar evento…</button>
+        <form id="f-del" hidden novalidate>
+          <label>Para confirmar, escribe <strong>ELIMINAR</strong><input name="confirm" autocomplete="off"></label>
+          <div class="form-msg"></div>
+          <div class="actions"><button class="btn btn-danger" type="submit">Eliminar definitivamente</button><button class="btn btn-ghost" type="button" id="btn-del-cancel">Cancelar</button></div>
+        </form>
       </section>`),
       bind(root) {
         const body = $('#regs-body', root);
@@ -738,7 +991,7 @@
               : `<small>Mercado objetivo:</small> ${esc(r.targetMarket)}`;
             const comps = (c.companions || []).map(x => esc(x.name + (x.email ? ' <' + x.email + '>' : ''))).join('<br>');
             return `<tr>
-              <td><strong>${esc(r.companyName)}</strong>${r.website ? `<br><small>${esc(r.website)}</small>` : ''}<br><small class="muted">Inscrito: ${fmtDate(r.createdAt)}</small></td>
+              <td><div class="row-start">${logoHtml(r, 'avatar-sm')}<strong>${esc(r.companyName)}</strong></div>${r.website ? `<br><small>${esc(r.website)}</small>` : ''}<br><small class="muted">Inscrito: ${fmtDate(r.createdAt)}</small></td>
               <td>${r.type === 'vendedor' ? 'Vendedor' : 'Comprador'}</td>
               <td>${detail}</td>
               <td>${esc(c.contactName)}<br><small>${esc(c.email)}<br>${esc(c.phone)}</small>${comps ? `<br><small class="muted">Acompañantes:<br>${comps}</small>` : ''}<br><small class="muted">${r.shareContact ? 'Comparte contacto' : 'No comparte contacto'} · ${esc((r.lang || '').toUpperCase())} · ${esc(r.tz || '')}</small></td>
@@ -757,7 +1010,7 @@
               regs.find(x => x.uid === uid).status = st;
               const stats = $$('.stat span', root);
               stats[2].textContent = count(null, 'pendiente'); stats[3].textContent = count(null, 'aprobada');
-            } catch (err) { alertBox(root, errMsg(err)); }
+            } catch (err) { alertBox(root, adminErr(err)); }
             draw();
           });
         };
@@ -773,12 +1026,49 @@
           const rows = regs.map(r => { const c = cmap[r.uid] || {}; return [r.companyName, r.type, r.status, (r.serviceTypes || []).map(k => I.services[k] ? I.services[k][0] : k).join(', '), r.destination, r.products, r.sernaturRegistry, r.targetMarket, r.description, r.website, c.contactName, c.email, c.phone, (c.companions || []).map(x => x.name + (x.email ? ' (' + x.email + ')' : '')).join(' / '), r.shareContact ? 'Sí' : 'No', r.lang, r.tz, fmtDate(r.createdAt)]; });
           downloadCsv('inscripciones-' + id + '.csv', [head].concat(rows));
         };
+        // grilla
+        const fs = $('#f-sched', root); let days = (sc.days || []).slice();
+        const toM = x => { const p = String(x || '').split(':'); return Number(p[0]) * 60 + Number(p[1] || 0); };
+        const drawSched = () => {
+          $('#day-chips', root).innerHTML = days.length ? days.map(d => `<span class="day-chip">${esc(fmtDate(d))}<button type="button" data-rmday="${esc(d)}" aria-label="Quitar">×</button></span>`).join('') : '<span class="muted small">Sin días todavía.</span>';
+          $$('[data-rmday]', root).forEach(b => b.onclick = () => { days = days.filter(x => x !== b.getAttribute('data-rmday')); drawSched(); });
+          const st = toM(val(fs, 'start')), en = toM(val(fs, 'end')), sl = Number(val(fs, 'slot')) || 0, gp = Number(val(fs, 'gap')) || 0;
+          let n = 0; if (sl > 0) for (let m = st; m + sl <= en; m += sl + gp) n++;
+          $('#sched-preview', root).textContent = `${n} reuniones posibles por empresa al día · ${n * days.length} en total por empresa.`;
+        };
+        $('#day-add', root).onclick = () => { const d = $('#day-new', root).value; if (d && !days.includes(d)) { days.push(d); days.sort(); } $('#day-new', root).value = ''; drawSched(); };
+        ['start', 'end', 'slot', 'gap'].forEach(n => fs.elements[n].addEventListener('input', drawSched));
+        drawSched();
+        fs.onsubmit = async e => {
+          e.preventDefault();
+          if (!days.length) return showError(fs, 'Agrega al menos un día.');
+          const schedule = { days, start: val(fs, 'start'), end: val(fs, 'end'), slot: Number(val(fs, 'slot')), gap: Number(val(fs, 'gap')) };
+          if (toM(schedule.end) <= toM(schedule.start)) return showError(fs, 'El término debe ser posterior al inicio.');
+          try { await DB.updateEvent(id, { schedule }); S.flash = { type: 'ok', msg: 'Grilla guardada.' }; render(); }
+          catch (err) { showError(fs, adminErr(err)); }
+        };
+        const bm = $('#btn-csv-m', root);
+        if (bm) bm.onclick = () => {
+          const head = ['Bloque (hora Chile)', 'Vendedor', 'Comprador', 'Solicitó', 'Estado', 'Mensaje', 'Creada', 'Respondida'];
+          const rows = meetings.map(m => [m.slot, (rmap[m.sellerUid] || {}).companyName, (rmap[m.buyerUid] || {}).companyName, (rmap[m.requesterUid] || {}).companyName, m.status, m.note, fmtDate(m.createdAt), fmtDate(m.respondedAt)]);
+          downloadCsv('reuniones-' + id + '.csv', [head].concat(rows));
+        };
+        // eliminar
+        const fd = $('#f-del', root);
+        $('#btn-del', root).onclick = () => { fd.hidden = false; $('#btn-del', root).hidden = true; fd.elements.confirm.focus(); };
+        $('#btn-del-cancel', root).onclick = () => { fd.hidden = true; $('#btn-del', root).hidden = false; };
+        fd.onsubmit = async e => {
+          e.preventDefault();
+          if (val(fd, 'confirm').toUpperCase() !== 'ELIMINAR') return showError(fd, 'Escribe ELIMINAR para confirmar.');
+          try { await DB.deleteEvent(id); S.flash = { type: 'ok', msg: 'Evento eliminado.' }; go('#/admin'); }
+          catch (err) { showError(fd, adminErr(err)); }
+        };
         const fe = $('#f-ev', root);
         fe.onsubmit = async e => {
           e.preventDefault();
           const r = readEventForm(fe, lockRegion ? ev.regionId : null); if (r.error) return showError(fe, r.error);
           try { await DB.updateEvent(id, r.data); S.flash = { type: 'ok', msg: 'Evento guardado.' }; render(); }
-          catch (err) { showError(fe, errMsg(err)); }
+          catch (err) { showError(fe, adminErr(err)); }
         };
       }
     };
@@ -790,13 +1080,23 @@
     S.isSuper = false; S.admin = null;
     if (S.user) { try { const r = await DB.getRoles(); S.isSuper = !!r.isSuper; S.admin = r.admin || null; } catch (e) { } }
   }
-  function init() {
+  function demoMail(o) {
+    let box = $('#demo-mail');
+    if (!box) { box = document.createElement('div'); box.id = 'demo-mail'; box.className = 'demo-mail'; document.body.appendChild(box); }
+    const item = document.createElement('div'); item.className = 'demo-mail-item';
+    item.innerHTML = `<button class="link" aria-label="Cerrar">×</button><p class="kicker">Correo simulado (demo) → ${esc(o.to)}</p><strong>${esc(o.subject)}</strong><p class="pre small">${esc(o.body)}</p>`;
+    $('button', item).onclick = () => item.remove();
+    box.prepend(item); setTimeout(() => item.remove(), 20000);
+  }
+  async function init() {
     S.lang = detectLang(); document.documentElement.lang = S.lang;
     document.title = CFG.appName + ' · ' + (CFG.appTagline || '');
-    if (CFG.mode === 'sheets') {
-      if (!CFG.apiUrl) { $('#main').innerHTML = page('<div class="card narrow"><p class="error">Falta la dirección del servidor (apiUrl) en config.js. Ver LEEME.md.</p></div>'); return; }
-      DB = window.RN_createSheetsDB(CFG);
-    } else DB = window.RN_LocalDB;
+    try {
+      if (CFG.mode === 'sheets') {
+        if (!CFG.apiUrl) throw new Error('Falta la dirección del servidor (apiUrl) en config.js. Ver LEEME.md.');
+        DB = window.RN_createSheetsDB(CFG);
+      } else { DB = await window.RN_createDemoDB(CFG); DB.onMail(demoMail); }
+    } catch (e) { $('#main').innerHTML = page(`<div class="card narrow"><p class="error">${esc(e.message)}</p></div>`); return; }
     DB.onAuth(async u => {
       if (S.busy) return;
       await refreshAuth(u);
