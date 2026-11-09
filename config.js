@@ -16,8 +16,9 @@ window.RN_CONFIG = {
   appTagline: 'Turismo Chile',
   organizer: 'SERNATUR Región de Valparaíso',
 
-  // Solo para el modo demo (en modo real se define en apps-script/Code.gs)
-  superadminEmails: ['tu-mail@gmail.com'],
+  // Solo para el modo demo. En modo real se define en Code.gs (Apps Script, privado).
+  // No pongas aquí tu correo: este archivo es público en GitHub.
+  superadminEmails: [],
 
   // Región que se muestra en la portada principal
   homeRegion: 'valparaiso',
