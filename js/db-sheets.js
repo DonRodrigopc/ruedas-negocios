@@ -24,6 +24,9 @@
     async function call(action, args) {
       const j = await transport({ action, args: args || {}, token });
       if (!j.ok) {
+        if (j.code === 'bad_request' && ['adminSetBlock', 'adminMoveMeeting'].includes(action)) {
+          throw new Error('La versión publicada de Apps Script no reconoce esta acción. Actualiza Code.gs y publica una nueva versión en la implementación existente.');
+        }
         const x = new Error(j.message || j.code); x.code = j.code;
         if (j.code === 'unauthenticated') { token = null; setTok(null); emit(null); }
         throw x;

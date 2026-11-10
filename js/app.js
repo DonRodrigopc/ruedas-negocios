@@ -1304,7 +1304,7 @@
     return { data: d };
   }
   function alertBox(root, msg) { const d = document.createElement('div'); d.className = 'flash error'; d.textContent = msg; root.prepend(d); }
-  const APP_VERSION = '5.3';
+  const APP_VERSION = '5.4';
   function versionBox() {
     const sv = S.serverVersion || '';
     const okv = DB.mode === 'demo' || sv === APP_VERSION;
@@ -1442,6 +1442,7 @@
         <div class="table-wrap"><table class="regs"><thead><tr><th>Empresa</th><th>Tipo</th><th>Detalle</th><th>Contacto</th><th>Estado</th><th>Acciones</th></tr></thead><tbody id="regs-body"></tbody></table></div>
       </section>`;
     const sAgendas = `<section class="card"><div class="row-between"><h2>Agendas individuales</h2><span class="small muted">Mínimo por empresa: <strong>${min}</strong> reuniones</span></div>
+        ${versionBox()}
         <div class="actions">
           <button class="btn btn-primary" id="btn-suggest">✨ Sugerir reuniones para llegar al mínimo</button>
           <button class="btn" id="btn-print-all">🖨 Imprimir todas las agendas (PDF)</button>
@@ -1665,7 +1666,7 @@
             const editable = future && ev.phase !== 'cerrado';
             if (m && m !== 'blocked') return `<div class="ag-slot ag-meet"><b>${esc(s.time)}</b>${esc(m.otherName)}${m.assigned ? ' <small>(asignada)</small>' : ''}${m.liveStatus ? `<small>${esc(liveLabel(m.liveStatus))}</small>` : ''}
               ${editable && canMove && m.otherUid && !m.liveStatus && !m.held ? `<button class="link small" data-move="${esc(s.id)}">Reprogramar</button>` : ''}
-              ${editable ? `<button class="link small" data-ag-cancel="${esc(s.id)}">Anular reunión</button>` : ''}</div>`;
+              ${ev.phase !== 'cerrado' ? `<button class="link small" data-ag-cancel="${esc(s.id)}">Liberar horario</button>` : ''}</div>`;
             if (m === 'blocked') return `<div class="ag-slot ag-blocked"><b>${esc(s.time)}</b>No disponible${editable ? `<button class="link small" data-ag-release="${esc(s.id)}">Liberar horario</button>` : ''}</div>`;
             if (Date.parse(s.end) <= nowMs) return `<div class="ag-slot ag-past"><b>${esc(s.time)}</b>—</div>`;
             return `<div class="ag-slot ag-free"><b>${esc(s.time)}</b><button class="link small" data-assign="${esc(uid)}" data-slot="${esc(s.id)}">+ Asignar</button>${editable ? `<button class="link small" data-ag-block="${esc(s.id)}">Bloquear horario</button>` : ''}</div>`;
@@ -1678,8 +1679,8 @@
           });
           $$('[data-ag-cancel]', tr).forEach(b => b.onclick = () => {
             const from = b.getAttribute('data-ag-cancel');
-            if (!window.confirm(`¿Anular la reunión con ${busy[from].otherName} del ${from}?`)) return;
-            return saveChange(b, () => DB.adminCancelMeeting(id, busy[from].id, from), 'Reunión anulada.');
+            if (!window.confirm(`¿Liberar el horario ${from}? Se cancelará la reunión con ${busy[from].otherName} y se liberará el horario de ambas empresas.`)) return;
+            return saveChange(b, () => DB.adminCancelMeeting(id, busy[from].id, from), 'Reunión cancelada. Horario liberado para ambas empresas.');
           });
           $$('[data-move]', tr).forEach(b => b.onclick = () => {
             const from = b.getAttribute('data-move');
