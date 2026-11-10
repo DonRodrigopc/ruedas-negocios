@@ -36,7 +36,7 @@
       try {
         const me = await call('me');
         if (!me) { token = null; setTok(null); return null; }
-        roles = { isSuper: !!me.isSuper, admin: me.admin, staffEvents: me.staffEvents || [] }; return me.user;
+        roles = { isSuper: !!me.isSuper, admin: me.admin, staffEvents: me.staffEvents || [], serverVersion: me.serverVersion || '' }; return me.user;
       } catch (e) { if (e.code === 'network') throw e; return null; }
     }
     async function startSession(r) { token = r.token; setTok(token); const u = await loadMe(); emit(u); return u; }
@@ -61,7 +61,7 @@
       getEvent: id => call('getEvent', { id }),
       createEvent: data => call('createEvent', { data }),
       updateEvent: (id, patch, force) => call('updateEvent', { id, patch, force: !!force }),
-      adminCancelMeeting: (eventId, id) => call('adminCancelMeeting', { eventId, id }),
+      adminCancelMeeting: (eventId, id, fromSlot) => call('adminCancelMeeting', { eventId, id, fromSlot }),
       deleteEvent: id => call('deleteEvent', { id }),
 
       getRegistration: (eventId, uid) => call('getRegistration', { eventId, uid }),
@@ -106,6 +106,8 @@
       getMonitor: eventId => call('getMonitor', { eventId }),
       getAvailability: eventId => call('getAvailability', { eventId }),
       getAgendas: eventId => call('getAgendas', { eventId }),
+      adminSetBlock: (eventId, uid, slot, blocked) => call('adminSetBlock', { eventId, uid, slot, blocked }),
+      adminMoveMeeting: (eventId, id, fromSlot, slot) => call('adminMoveMeeting', { eventId, id, fromSlot, slot }),
       adminAssignMeeting: (eventId, sellerUid, buyerUid, slot) => call('adminAssignMeeting', { eventId, sellerUid, buyerUid, slot }),
       suggestMeetings: eventId => call('suggestMeetings', { eventId })
     };

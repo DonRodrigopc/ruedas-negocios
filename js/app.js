@@ -1304,7 +1304,7 @@
     return { data: d };
   }
   function alertBox(root, msg) { const d = document.createElement('div'); d.className = 'flash error'; d.textContent = msg; root.prepend(d); }
-  const APP_VERSION = '5.2';
+  const APP_VERSION = '5.3';
   function versionBox() {
     const sv = S.serverVersion || '';
     const okv = DB.mode === 'demo' || sv === APP_VERSION;
@@ -1645,19 +1645,58 @@
             catch (err) { alertBox(root, adminErr(err)); }
           });
         };
+        const canMove = ['agenda', 'reuniones'].includes(ev.phase);
         const toggleDetail = uid => {
           const tr = $(`[data-detail="${uid}"]`, agBody); const p = pmap[uid];
           if (!tr.hidden) { tr.hidden = true; return; }
           const busy = busyOf(p);
           const nowMs = Date.now();
+          const saveChange = async (button, action, message) => {
+            button.disabled = true;
+            try {
+              await action();
+              S.adminTab[id] = 'agendas'; S.adminAgenda = { eventId: id, uid };
+              S.flash = { type: 'ok', msg: message }; render();
+            } catch (err) { button.disabled = false; alertBox(root, adminErr(err)); }
+          };
           tr.firstElementChild.innerHTML = `<div class="slot-days">${groupByDay(agendas.slots).map(g => `<div class="slot-day"><h3>${esc(g.day)}</h3><div class="ag-slots">${g.slots.map(s => {
             const m = busy[s.id];
-            if (m && m !== 'blocked') return `<div class="ag-slot ag-meet"><b>${esc(s.time)}</b>${esc(m.otherName)}${m.assigned ? ' <small>(asignada)</small>' : ''}${m.liveStatus ? `<small>${esc(liveLabel(m.liveStatus))}</small>` : ''}</div>`;
-            if (m === 'blocked') return `<div class="ag-slot ag-blocked"><b>${esc(s.time)}</b>No disponible</div>`;
+            const future = Date.parse(s.start) > nowMs;
+            const editable = future && ev.phase !== 'cerrado';
+            if (m && m !== 'blocked') return `<div class="ag-slot ag-meet"><b>${esc(s.time)}</b>${esc(m.otherName)}${m.assigned ? ' <small>(asignada)</small>' : ''}${m.liveStatus ? `<small>${esc(liveLabel(m.liveStatus))}</small>` : ''}
+              ${editable && canMove && m.otherUid && !m.liveStatus && !m.held ? `<button class="link small" data-move="${esc(s.id)}">Reprogramar</button>` : ''}
+              ${editable ? `<button class="link small" data-ag-cancel="${esc(s.id)}">Anular reunión</button>` : ''}</div>`;
+            if (m === 'blocked') return `<div class="ag-slot ag-blocked"><b>${esc(s.time)}</b>No disponible${editable ? `<button class="link small" data-ag-release="${esc(s.id)}">Liberar horario</button>` : ''}</div>`;
             if (Date.parse(s.end) <= nowMs) return `<div class="ag-slot ag-past"><b>${esc(s.time)}</b>—</div>`;
-            return `<div class="ag-slot ag-free"><b>${esc(s.time)}</b><button class="link small" data-assign="${esc(uid)}" data-slot="${esc(s.id)}">+ Asignar</button></div>`;
+            return `<div class="ag-slot ag-free"><b>${esc(s.time)}</b><button class="link small" data-assign="${esc(uid)}" data-slot="${esc(s.id)}">+ Asignar</button>${editable ? `<button class="link small" data-ag-block="${esc(s.id)}">Bloquear horario</button>` : ''}</div>`;
           }).join('')}</div></div>`).join('')}</div><div class="assign-box"></div>`;
           tr.hidden = false;
+          $$('[data-ag-block], [data-ag-release]', tr).forEach(b => b.onclick = () => {
+            const blocked = b.hasAttribute('data-ag-block');
+            const slot = b.getAttribute(blocked ? 'data-ag-block' : 'data-ag-release');
+            return saveChange(b, () => DB.adminSetBlock(id, uid, slot, blocked), blocked ? 'Horario bloqueado.' : 'Horario liberado.');
+          });
+          $$('[data-ag-cancel]', tr).forEach(b => b.onclick = () => {
+            const from = b.getAttribute('data-ag-cancel');
+            if (!window.confirm(`¿Anular la reunión con ${busy[from].otherName} del ${from}?`)) return;
+            return saveChange(b, () => DB.adminCancelMeeting(id, busy[from].id, from), 'Reunión anulada.');
+          });
+          $$('[data-move]', tr).forEach(b => b.onclick = () => {
+            const from = b.getAttribute('data-move');
+            const m = busy[from];
+            const other = pmap[m.otherUid];
+            const otherBusy = other ? busyOf(other) : {};
+            const available = other ? agendas.slots.filter(s => Date.parse(s.start) > Date.now() && !busy[s.id] && !otherBusy[s.id]) : [];
+            const box = $('.assign-box', tr);
+            box.innerHTML = `<div class="assign-form"><strong>Reprogramar con ${esc(m.otherName)} · ${esc(from)}</strong>
+              ${available.length ? `<select aria-label="Nuevo horario">${available.map(s => `<option value="${esc(s.id)}">${esc(s.id)}</option>`).join('')}</select>
+              <button class="btn btn-primary btn-small" type="button" data-move-ok>Confirmar cambio</button>` : '<span class="muted">No hay horarios libres para ambas empresas.</span>'}
+              <button class="btn btn-ghost btn-small" type="button" data-move-close>Cerrar</button></div>`;
+            $('[data-move-close]', box).onclick = () => { box.innerHTML = ''; };
+            const ok = $('[data-move-ok]', box);
+            if (ok) ok.onclick = () => saveChange(ok, () => DB.adminMoveMeeting(id, m.id, from, $('select', box).value), 'Reunión reprogramada.');
+            box.scrollIntoView({ block: 'nearest' });
+          });
           $$('[data-assign]', tr).forEach(b => b.onclick = () => {
             const slot = b.getAttribute('data-slot');
             const cands = P.filter(o => o.type !== p.type && !busyOf(o)[slot] && !paired(o.uid, uid)).sort((a, b2) => a.meetings.length - b2.meetings.length || a.companyName.localeCompare(b2.companyName));
@@ -1678,6 +1717,11 @@
         };
         ['#ag-type', '#ag-under'].forEach(s => { $(s, root).onchange = drawAg; }); $('#ag-q', root).oninput = drawAg;
         drawAg();
+        if (S.adminAgenda && S.adminAgenda.eventId === id) {
+          const uid = S.adminAgenda.uid;
+          S.adminAgenda = null;
+          if (pmap[uid]) toggleDetail(uid);
+        }
         const printAg = people => printWindow('Agendas · ' + ev.name, agendaSheets(ev, agendas, people.map(p => ({
           companyName: p.companyName, type: p.type, table: p.table, contactName: p.contactName, companion: p.companion,
           meetings: p.meetings.map(m => ({ slot: m.slot, otherName: m.otherName, otherTable: m.otherTable }))
