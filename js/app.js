@@ -71,7 +71,7 @@
 
   // ---------- horarios ----------
   const USER_TZ = (Intl.DateTimeFormat().resolvedOptions().timeZone) || 'America/Santiago';
-  const LOCALES = { es: 'es-CL', en: 'en-US', pt: 'pt-BR' };
+  const LOCALES = { es: 'es-CL', en: 'en-US', pt: 'pt-BR', fr: 'fr-FR' };
   const loc = () => LOCALES[S.lang] || 'es-CL';
   function fmtTime(iso, tz) { return new Intl.DateTimeFormat(loc(), { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: tz || USER_TZ }).format(new Date(iso)); }
   function fmtDay(iso, tz) { const s = new Intl.DateTimeFormat(loc(), { weekday: 'long', day: 'numeric', month: 'long', timeZone: tz || USER_TZ }).format(new Date(iso)); return s.charAt(0).toUpperCase() + s.slice(1); }
@@ -1304,6 +1304,12 @@
     return { data: d };
   }
   function alertBox(root, msg) { const d = document.createElement('div'); d.className = 'flash error'; d.textContent = msg; root.prepend(d); }
+  const APP_VERSION = '5.2';
+  function versionBox() {
+    const sv = S.serverVersion || '';
+    const okv = DB.mode === 'demo' || sv === APP_VERSION;
+    return `<p class="small ${okv ? 'muted' : 'error'} version-line">Página v${APP_VERSION} · Servidor ${sv ? 'v' + esc(sv) : 'versión antigua'}${okv ? ' ✓' : ' — <strong>el servidor no está actualizado</strong>: en Apps Script pega el nuevo Code.gs, guarda y ve a Implementar → Administrar implementaciones → lápiz → Versión: Nueva versión → Implementar. Luego recarga esta página.'}</p>`;
+  }
   function orgName(id) { return id === 'central' ? 'Nivel Central' : (REGIONES[id] || id); }
 
   async function viewAdmin() {
@@ -1337,7 +1343,7 @@
           <form id="f-event" novalidate>${eventFormFields({ regionId: region || CFG.homeRegion || 'valparaiso', phase: 'borrador', format: 'online', minMeetings: 10 }, !!region)}
           <div class="form-msg"></div><button class="btn btn-primary" type="submit">Crear evento</button></form>
         </details>
-      </section>${adminsBlock}`),
+      </section>${adminsBlock}${versionBox()}`),
       bind(root) {
         const fe = $('#f-event', root); bindEventForm(fe);
         fe.onsubmit = async e => {
@@ -1545,7 +1551,7 @@
       html: page(`<div class="ctxbar"><div class="ctx-main"><span class="ctx-label">Administrando</span><strong>${esc(ev.name)}</strong> ${fmtBadge(ev.format)} <span class="badge ph-${esc(ev.phase)}">${esc(phaseLabel(ev.phase))}</span> <span class="small muted">${esc(orgName(ev.regionId))}</span></div>
         <select id="ev-switch" aria-label="Cambiar de evento"><option value="">Cambiar de evento…</option>${others.map(e => `<option value="${esc(e.id)}">${esc(e.name)} · ${esc(t('fmt_' + (e.format || 'online')))}</option>`).join('')}<option value="__list">← Todos los eventos</option></select></div>
         <nav class="tabs" role="tablist">${TABS.map(([k, l]) => `<button class="tab${k === tab ? ' on' : ''}" role="tab" data-tab="${k}" aria-selected="${k === tab}">${l}${k === 'inscripciones' && count(null, 'pendiente') ? ` <span class="count">${count(null, 'pendiente')}</span>` : ''}${k === 'agendas' && under.length ? ` <span class="count warn">${under.length}</span>` : ''}</button>`).join('')}</nav>
-        ${TABS.map(([k]) => `<div class="tab-panel" data-panel="${k}"${k === tab ? '' : ' hidden'}>${panels[k]}</div>`).join('')}`),
+        ${TABS.map(([k]) => `<div class="tab-panel" data-panel="${k}"${k === tab ? '' : ' hidden'}>${panels[k]}</div>`).join('')}${versionBox()}`),
       bind(root) {
         // navegación
         const sw = $('#ev-switch', root); sw.onchange = () => { if (sw.value === '__list') go('#/admin'); else if (sw.value) go('#/admin/evento/' + enc(sw.value)); };
@@ -1870,7 +1876,7 @@
   async function refreshAuth(u) {
     S.user = u ? { uid: u.uid, email: String(u.email || '').toLowerCase() } : null;
     S.isSuper = false; S.admin = null; S.staffEvents = [];
-    if (S.user) { try { const r = await DB.getRoles(); S.isSuper = !!r.isSuper; S.admin = r.admin || null; S.staffEvents = r.staffEvents || []; } catch (e) { } }
+    if (S.user) { try { const r = await DB.getRoles(); S.isSuper = !!r.isSuper; S.admin = r.admin || null; S.staffEvents = r.staffEvents || []; S.serverVersion = r.serverVersion || ''; } catch (e) { } }
   }
   function demoMail(o) {
     let box = $('#demo-mail');
