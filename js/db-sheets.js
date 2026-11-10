@@ -36,7 +36,7 @@
       try {
         const me = await call('me');
         if (!me) { token = null; setTok(null); return null; }
-        roles = { isSuper: !!me.isSuper, admin: me.admin }; return me.user;
+        roles = { isSuper: !!me.isSuper, admin: me.admin, staffEvents: me.staffEvents || [] }; return me.user;
       } catch (e) { if (e.code === 'network') throw e; return null; }
     }
     async function startSession(r) { token = r.token; setTok(token); const u = await loadMe(); emit(u); return u; }
@@ -60,7 +60,8 @@
       listEventsForAdmin: regionId => call('listEventsForAdmin', { regionId }),
       getEvent: id => call('getEvent', { id }),
       createEvent: data => call('createEvent', { data }),
-      updateEvent: (id, patch) => call('updateEvent', { id, patch }),
+      updateEvent: (id, patch, force) => call('updateEvent', { id, patch, force: !!force }),
+      adminCancelMeeting: (eventId, id) => call('adminCancelMeeting', { eventId, id }),
       deleteEvent: id => call('deleteEvent', { id }),
 
       getRegistration: (eventId, uid) => call('getRegistration', { eventId, uid }),
@@ -88,7 +89,25 @@
       syncGuests: eventId => call('syncGuests', { eventId }),
       joinMeeting: (eventId, id) => call('joinMeeting', { eventId, id }),
       saveSurvey: (eventId, id, d) => call('saveSurvey', Object.assign({ eventId, id }, d)),
-      listSurveys: eventId => call('listSurveys', { eventId })
+      listSurveys: eventId => call('listSurveys', { eventId }),
+      // v5: acreditación, asignación, disponibilidad, monitor
+      myAccreditation: eventId => call('myAccreditation', { eventId }),
+      selfCheckin: eventId => call('selfCheckin', { eventId }),
+      listCheckins: eventId => call('listCheckins', { eventId }),
+      staffSearch: (eventId, q) => call('staffSearch', { eventId, q }),
+      staffCheckin: (eventId, code, undo) => call('staffCheckin', { eventId, code, undo: !!undo }),
+      listStaff: eventId => call('listStaff', { eventId }),
+      setStaff: (eventId, email, name) => call('setStaff', { eventId, email, name }),
+      removeStaff: (eventId, email) => call('removeStaff', { eventId, email }),
+      setTable: (eventId, uid, table) => call('setTable', { eventId, uid, table }),
+      autoTables: eventId => call('autoTables', { eventId }),
+      markMeeting: (eventId, id, state) => call('markMeeting', { eventId, id, state }),
+      heartbeat: (eventId, meetingId, leave) => call('heartbeat', { eventId, meetingId: meetingId || '', leave: !!leave }),
+      getMonitor: eventId => call('getMonitor', { eventId }),
+      getAvailability: eventId => call('getAvailability', { eventId }),
+      getAgendas: eventId => call('getAgendas', { eventId }),
+      adminAssignMeeting: (eventId, sellerUid, buyerUid, slot) => call('adminAssignMeeting', { eventId, sellerUid, buyerUid, slot }),
+      suggestMeetings: eventId => call('suggestMeetings', { eventId })
     };
   }
   window.RN_createSheetsDB = create;
