@@ -1465,14 +1465,16 @@
     const sMonitor = `<section class="card"><div class="row-between"><h2>Monitor en vivo</h2><span class="small muted" id="mon-time"></span></div>
         <p class="small muted">Se actualiza cada 20 segundos. ${online ? 'Una sala está "conectada" cuando la empresa tiene abierta la página de la reunión.' : 'Muestra las mesas, la acreditación y lo que marcan los vendedores.'}</p>
         <div id="mon-body"><p class="muted">Cargando…</p></div></section>`;
-    const roomsMissing = rooms.filter(r => !r.url).length;
+    const evProv = ev.videoProvider || 'vdo';
+    const roomsMissing = rooms.filter(r => !r.url || (r.provider !== evProv && r.provider !== 'manual')).length;
     const sSalas = online ? `<section class="card"><h2>Salas de video</h2>
         <p class="small">Proveedor del evento: <strong>${esc(PROVIDER_LABEL[ev.videoProvider || 'vdo'])}</strong> (se cambia en Configuración).</p>
         <p class="small muted">Se crea una sala fija por vendedor aprobado. ${(ev.videoProvider || 'vdo') === 'meet' ? 'Con Meet se crean en tu Google Calendar y los compradores quedan invitados.' : 'Las salas se abren dentro de la plataforma, con el panel de control de la reunión.'}</p>
         <div class="actions">
-          <button class="btn btn-primary" id="btn-rooms"${roomsMissing ? '' : ' disabled'}>${roomsMissing ? `Crear salas (${roomsMissing} pendientes)` : 'Todas las salas creadas ✓'}</button>
+          <button class="btn btn-primary" id="btn-rooms"${roomsMissing ? '' : ' disabled'}>${roomsMissing ? (rooms.some(r => r.url && r.provider !== evProv && r.provider !== 'manual') ? `Cambiar salas a ${esc(PROVIDER_LABEL[evProv].split(' (')[0])} (${roomsMissing})` : `Crear salas (${roomsMissing} pendientes)`) : 'Todas las salas creadas ✓'}</button>
           ${(ev.videoProvider || 'vdo') === 'meet' ? '<button class="btn" id="btn-sync">Actualizar invitados</button>' : ''}
         </div>
+        <p class="small muted">Para usar un link propio, pégalo en "Cambiar link" y presiona Guardar. Los links de VDO.Ninja${ev.jitsiDomain ? ' y de ' + esc(ev.jitsiDomain) : ''} se abren dentro de la plataforma; los demás (Meet, Zoom, Teams) en otra ventana.</p>
         <div class="form-msg" id="rooms-msg"></div>
         ${rooms.length ? `<div class="table-wrap"><table><thead><tr><th>Vendedor</th><th>Sala</th><th>Cambiar link</th></tr></thead><tbody>${rooms.map(r => `<tr>
           <td><strong>${esc(r.companyName)}</strong></td>
