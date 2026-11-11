@@ -952,6 +952,7 @@
       </form>`;
     };
     const blocks = {}; mine.blocks.forEach(b => { blocks[b] = 1; });
+    const locked = {}; (mine.lockedBlocks || []).forEach(b => { locked[b] = 1; });
     const meetAt = {}; confirmed.forEach(m => { meetAt[m.slot] = m; });
     const nowMs = Date.now();
     const brkByDay = {}; (sched.breaks || []).forEach(b => { (brkByDay[fmtDay(b.start)] = brkByDay[fmtDay(b.start)] || []).push(b); });
@@ -959,6 +960,7 @@
       const pre = (brkByDay[g.day] || []).filter(x => Date.parse(x.start) <= Date.parse(s.start) && (si === 0 || Date.parse(x.start) > Date.parse(g.slots[si - 1].start))).map(x => `<div class="slot slot-break">${fmtTime(x.start)}<small>${esc(x.label)}</small></div>`).join('');
       return pre + (() => {
       const m = meetAt[s.id], b = blocks[s.id], isPast = Date.parse(s.start) <= nowMs;
+      if (locked[s.id]) return `<div class="slot slot-blocked" title="${esc(t('blocked_admin'))}">${fmtTime(s.start)}<small>🔒 ${t('blocked_short')}</small></div>`;
       if (m) return `<div class="slot slot-meet" title="${esc(m.other ? m.other.companyName : '')}">${fmtTime(s.start)}<small>${esc(m.other ? m.other.companyName : '')}</small></div>`;
       return `<button type="button" class="slot ${b ? 'slot-blocked' : ''}" data-block="${esc(s.id)}" data-on="${b ? 1 : 0}"${isPast || !open ? ' disabled' : ''}>${fmtTime(s.start)}<small>${b ? t('blocked') : t('free')}</small></button>`;
       })();
@@ -1304,7 +1306,7 @@
     return { data: d };
   }
   function alertBox(root, msg) { const d = document.createElement('div'); d.className = 'flash error'; d.textContent = msg; root.prepend(d); }
-  const APP_VERSION = '5.4';
+  const APP_VERSION = '5.5';
   function versionBox() {
     const sv = S.serverVersion || '';
     const okv = DB.mode === 'demo' || sv === APP_VERSION;
@@ -1624,7 +1626,7 @@
         // agendas
         const P = agendas.participants;
         const pmap = {}; P.forEach(p => { pmap[p.uid] = p; });
-        const busyOf = p => { const b = {}; p.meetings.forEach(m => { b[m.slot] = m; }); p.blocks.forEach(s => { if (!b[s]) b[s] = 'blocked'; }); return b; };
+        const busyOf = p => { const b = {}; const lk = {}; (p.lockedBlocks || []).forEach(s => { lk[s] = 1; }); p.meetings.forEach(m => { b[m.slot] = m; }); p.blocks.forEach(s => { if (!b[s]) b[s] = lk[s] ? 'locked' : 'blocked'; }); return b; };
         const paired = (a, b) => meetings.some(m => ['pendiente', 'aceptada'].includes(m.status) && ((m.sellerUid === a && m.buyerUid === b) || (m.sellerUid === b && m.buyerUid === a)));
         const agBody = $('#ag-body', root);
         const drawAg = () => {
@@ -1664,10 +1666,11 @@
             const m = busy[s.id];
             const future = Date.parse(s.start) > nowMs;
             const editable = future && ev.phase !== 'cerrado';
-            if (m && m !== 'blocked') return `<div class="ag-slot ag-meet"><b>${esc(s.time)}</b>${esc(m.otherName)}${m.assigned ? ' <small>(asignada)</small>' : ''}${m.liveStatus ? `<small>${esc(liveLabel(m.liveStatus))}</small>` : ''}
+            if (m && typeof m === 'object') return `<div class="ag-slot ag-meet"><b>${esc(s.time)}</b>${esc(m.otherName)}${m.assigned ? ' <small>(asignada)</small>' : ''}${m.liveStatus ? `<small>${esc(liveLabel(m.liveStatus))}</small>` : ''}
               ${editable && canMove && m.otherUid && !m.liveStatus && !m.held ? `<button class="link small" data-move="${esc(s.id)}">Reprogramar</button>` : ''}
-              ${ev.phase !== 'cerrado' ? `<button class="link small" data-ag-cancel="${esc(s.id)}">Liberar horario</button>` : ''}</div>`;
-            if (m === 'blocked') return `<div class="ag-slot ag-blocked"><b>${esc(s.time)}</b>No disponible${editable ? `<button class="link small" data-ag-release="${esc(s.id)}">Liberar horario</button>` : ''}</div>`;
+              ${editable && !m.liveStatus && !m.held ? `<button class="link small" data-ag-cancel="${esc(s.id)}">Cancelar reunión</button>` : ''}</div>`;
+            if (m === 'locked') return `<div class="ag-slot ag-blocked"><b>${esc(s.time)}</b>Bloqueado por administración${editable ? `<button class="link small" data-ag-release="${esc(s.id)}">Liberar horario</button>` : ''}</div>`;
+            if (m === 'blocked') return `<div class="ag-slot ag-blocked"><b>${esc(s.time)}</b>No disponible <small>(marcado por la empresa)</small>${editable ? `<button class="link small" data-ag-release="${esc(s.id)}" data-company-block>Liberar horario</button>` : ''}</div>`;
             if (Date.parse(s.end) <= nowMs) return `<div class="ag-slot ag-past"><b>${esc(s.time)}</b>—</div>`;
             return `<div class="ag-slot ag-free"><b>${esc(s.time)}</b><button class="link small" data-assign="${esc(uid)}" data-slot="${esc(s.id)}">+ Asignar</button>${editable ? `<button class="link small" data-ag-block="${esc(s.id)}">Bloquear horario</button>` : ''}</div>`;
           }).join('')}</div></div>`).join('')}</div><div class="assign-box"></div>`;
@@ -1675,11 +1678,12 @@
           $$('[data-ag-block], [data-ag-release]', tr).forEach(b => b.onclick = () => {
             const blocked = b.hasAttribute('data-ag-block');
             const slot = b.getAttribute(blocked ? 'data-ag-block' : 'data-ag-release');
+            if (b.hasAttribute('data-company-block') && !window.confirm(`La empresa marcó ${slot} como no disponible. ¿Liberarlo de todas formas? Otras empresas podrán pedirle reuniones en ese horario.`)) return;
             return saveChange(b, () => DB.adminSetBlock(id, uid, slot, blocked), blocked ? 'Horario bloqueado.' : 'Horario liberado.');
           });
           $$('[data-ag-cancel]', tr).forEach(b => b.onclick = () => {
             const from = b.getAttribute('data-ag-cancel');
-            if (!window.confirm(`¿Liberar el horario ${from}? Se cancelará la reunión con ${busy[from].otherName} y se liberará el horario de ambas empresas.`)) return;
+            if (!window.confirm(`¿Cancelar la reunión de las ${from}? Se cancelará la reunión con ${busy[from].otherName} y se liberará el horario de ambas empresas.`)) return;
             return saveChange(b, () => DB.adminCancelMeeting(id, busy[from].id, from), 'Reunión cancelada. Horario liberado para ambas empresas.');
           });
           $$('[data-move]', tr).forEach(b => b.onclick = () => {

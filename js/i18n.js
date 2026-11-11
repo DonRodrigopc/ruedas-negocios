@@ -74,6 +74,8 @@ window.RN_I18N = {
     existing_incoming: ["Esta empresa te envió una solicitud. Respóndela en tu agenda.","This company sent you a request. Answer it in your schedule.","Esta empresa enviou uma solicitação. Responda na sua agenda.","Cette entreprise vous a envoyé une demande. Répondez-y dans votre agenda."],
     existing_confirmed: ["Tienes una reunión confirmada con esta empresa.","You have a confirmed meeting with this company.","Você tem uma reunião confirmada com esta empresa.","Vous avez un rendez-vous confirmé avec cette entreprise."],
     blocked: ["No disponible","Unavailable","Indisponível","Indisponible"],
+    blocked_short: ["Bloqueado","Blocked","Bloqueado","Bloqué"],
+    blocked_admin: ["Bloqueado por la organización","Blocked by the organizer","Bloqueado pela organização","Bloqué par l'organisation"],
     free: ["Libre","Free","Livre","Libre"],
     no_slots: ["El organizador aún no publica los horarios.","The organizer has not published the time slots yet.","A organização ainda não publicou os horários.","L'organisateur n'a pas encore publié les horaires."],
     err_slot_taken: ["Ese horario ya no está disponible. Elige otro.","That time is no longer available. Choose another one.","Esse horário não está mais disponível. Escolha outro.","Ce créneau n'est plus disponible. Choisissez-en un autre."],
